@@ -1,123 +1,33 @@
 # ScopeCAM
 
-A Windows viewer for AmScope (ToupTek) microscope cameras: live feed with a
-sectioned control panel (Camera, Exposure, Color, Image, View, Capture),
-exposure/gain/white-balance/color controls, focus peaking, mouse-wheel zoom,
-and PNG snapshots. It auto-connects to the first camera it finds and
-reconnects automatically if the camera is unplugged.
+A Windows viewer for AmScope (ToupTek) microscope cameras, built for PCB
+inspection and soldering. Live feed with a sectioned control panel (Camera,
+Exposure, Color, Image, View, Capture), full exposure / gain / white-balance /
+color control, focus peaking, mouse-wheel zoom, and PNG snapshots. It
+auto-connects to the first camera it finds and reconnects automatically if the
+camera is unplugged.
 
-The UI uses a light, flat theme (Segoe UI, sectioned groups, accent-blue
-primary buttons) and renders video through a custom fast-scaling control so
-it stays responsive at full resolution.
+The UI is a light, flat theme (Segoe UI, sectioned groups, accent-blue primary
+buttons) and renders video through a custom fast-scaling control so it stays
+responsive at full resolution.
+
+## Requirements
+
+- Windows (x64), tested on Windows 11.
+- The **.NET 8 Desktop Runtime** (the published exe is framework-dependent).
+- The **AmScope software** installed — the app loads its camera SDK
+  (`amcam.dll`) from `C:\Program Files\AmScope\AmScope\x64\`. The DLL is not
+  copied or redistributed. If you uninstall AmScope, copy that DLL next to
+  `ScopeCAM.exe`.
+- An AmScope / ToupTek USB camera (developed against the MU503, 2560×1922).
 
 ## Running
 
-Double-click **`ScopeCAM.exe` in this folder** (or the ScopeCAM shortcut on
+Double-click **`ScopeCAM.exe`** in the repo root (or the ScopeCAM shortcut on
 the Desktop — it points to the same file).
 
-Close the AmScope application first — only one program can use the camera at
-a time.
-
-After code changes, regenerate the exe with:
-
-```
-dotnet publish src\ScopeCAM.csproj -c Release -p:PublishSingleFile=true -p:DebugType=none --no-self-contained -o .
-```
-
-## Controls
-
-All sliders also take typed values in the box next to them (Enter or click
-away to apply; both `12.5` and `12,5` work).
-
-- **Size** — camera resolution. Full 2560×1922 runs ~14 fps (the USB 3.0
-  throughput limit); binned 1280×960 runs ~36 fps. **Frame rate** is shown
-  live below the size.
-- **Auto exposure** — on by default. **Target** biases how bright auto
-  exposure aims (lower it if shiny solder blows out). **Max ms** is the
-  longest exposure auto mode may use — it sets the frame rate floor
-  (fps ≈ 1000 / Max ms, up to the sensor readout limit); auto exposure
-  compensates with gain. Uncheck for manual control via Time/Gain.
-- **Time** — logarithmic slider over the camera's full exposure range (ms).
-  Manual mode only.
-- **Gain** — analog gain in percent (100 % = 1×). Manual mode only.
-- **Auto white balance** — one-push color correction (runs automatically on
-  first connect); the result lands in the **Temp**/**Tint** sliders, which
-  you can then adjust manually.
-- **Gamma / Contrast / Saturate** — color correction; **Reset colors**
-  returns all color settings to camera defaults.
-- **Sharpen** — SDK sharpening strength 0–500 (default 150; applied with a
-  noise threshold so flat areas aren't speckled).
-- **Denoise** — 0–100 (default 0), spatial noise reduction done in the app
-  (the camera's own denoise is a no-op on this model — verified — so it's
-  computed here). Blends each pixel toward its neighbours, so high values
-  soften fine detail; pair with Sharpen.
-- **Auto sharpen** — analyzes the current frame's noise and sets Sharpen and
-  Denoise automatically (more noise → less sharpening, more denoise). A
-  heuristic starting point; nudge from there.
-- **Demosaic** — the raw-to-color conversion algorithm. EA (default) is
-  fast; try AHD if fine detail shows rainbow speckle — it suppresses false
-  color best but costs more CPU (may reduce fps at full resolution).
-- **Flicker** — anti-banding: DC (default), 50 Hz, or 60 Hz. Leave on DC
-  unless you see rolling bands in the image. Note: in the AC modes the
-  camera firmware locks exposure to coarse steps (10 ms at 50 Hz) and its
-  auto exposure oscillates between steps — if you need an AC mode, prefer
-  manual exposure.
-- **Flip horizontal/vertical** — match image movement to hand movement.
-- **Crosshair** — center reference overlay.
-- **Focus peaking** — highlights in-focus (high-contrast) edges in bright
-  green. Turn the microscope's focus knob until the most of your subject
-  lights up — that's peak focus. **Peak sens** controls how aggressively
-  edges are flagged.
-- **Freeze** — pause the live feed to inspect; Resume to continue.
-- **Snapshot** — saves a PNG to `Pictures\ScopeCAM\`.
-
-**Zoom:** scroll the mouse wheel over the video to zoom in/out (centered on
-the cursor), drag with the left button to pan, and double-click to reset.
-This is a display zoom — it doesn't change what Snapshot saves.
-- **Save defaults** — stores the current resolution, exposure mode and
-  values, sharpening, flicker, flips, and crosshair to
-  `%APPDATA%\ScopeCAM\settings.json`; they are re-applied every time the
-  app connects.
-
-## Startup tuning (30+ fps, stable auto exposure)
-
-On connect the app configures the camera for crisp, high-framerate live view:
-
-- USB frame speed level set to the camera's maximum (full USB 3.0 bandwidth)
-  and realtime mode on (stale buffered frames are dropped), frame queues
-  shortened to the minimum, and the USB grab thread priority raised —
-  minimum capture-to-display latency.
-- The live view renders through a custom fast-scaling control instead of
-  PictureBox (whose high-quality bicubic scaling costs tens of ms per 5 MP
-  frame on the UI thread).
-- Auto exposure capped at the Max ms goal time (default 33 ms; the SDK
-  default allows 350 ms ≈ 3 fps); gain capped at 500 % so it can't get too
-  noisy. Verified ~36 fps on the MU503 at 1280×960.
-- Auto-exposure anti-hunting: full-frame average metering (the SDK default
-  meters only the brightest 1 % of pixels, which chases specular solder
-  reflections), raised reaction threshold, and damped exposure/gain
-  transitions.
-- Anti-flicker defaults to DC. This matters: in 50/60 Hz AC mode the
-  firmware quantizes exposure to the mains half-period and its auto
-  exposure oscillates between the two steps bracketing the ideal exposure
-  (measured ~6 Hz brightness pumping on the MU503, under every
-  AUTOEXP_POLICY setting). With DC mode auto exposure converges in under
-  a second and stays put.
-- One-push auto white balance, moderate sharpening.
-- EA (Edge Aware) demosaic instead of the SDK default bilinear, which
-  produced rainbow false color along fine traces and pin edges (verified by
-  A/B captures). EA removes the fringing at the lowest CPU cost of the
-  SDK's algorithms.
-
-## How it works
-
-The app talks directly to `amcam.dll`, the ToupTek SDK that ships with the
-AmScope software (loaded from `C:\Program Files\AmScope\AmScope\x64\`; the
-DLL is not copied or redistributed). `src/AmcamNative.cs` holds the P/Invoke
-declarations; `src/MainForm.cs` is the whole UI. Frames are streamed in pull
-mode: the SDK signals an image event on its own thread, and the UI thread
-pulls the newest 24-bit frame straight into a GDI+ bitmap (frame events are
-coalesced, so the UI never backlogs).
+Only one program can use the camera at a time, so close the AmScope
+application first.
 
 ## Building
 
@@ -126,6 +36,121 @@ Requires the .NET 8 SDK (x64):
 ```
 dotnet build src\ScopeCAM.csproj -c Release
 ```
+
+To regenerate the single-file `ScopeCAM.exe` in the repo root:
+
+```
+dotnet publish src\ScopeCAM.csproj -c Release -p:PublishSingleFile=true -p:DebugType=none --no-self-contained -o .
+```
+
+## Controls
+
+Every slider also takes a typed value in the box beside it (press Enter or
+click away to apply; both `12.5` and `12,5` are accepted).
+
+**Camera**
+- **Size** — camera resolution. Full 2560×1922 runs ~14 fps (the USB 3.0
+  throughput ceiling); binned 1280×960 runs ~36 fps. **Frame rate** is shown
+  live below it.
+
+**Exposure**
+- **Auto exposure** — on by default. **Target** biases how bright auto
+  exposure aims (lower it if shiny solder blows out). **Max ms** is the
+  longest exposure auto mode may use — it sets the frame-rate floor
+  (fps ≈ 1000 / Max ms, up to the sensor readout limit); auto exposure makes
+  up the difference with gain. Uncheck for manual control.
+- **Time** — logarithmic exposure slider over the camera's full range (ms).
+  Manual mode only.
+- **Gain** — analog gain in percent (100 % = 1×). Manual mode only.
+
+**Color**
+- **Auto white balance** — one-push correction (also runs on first connect);
+  the result lands in the **Temp** / **Tint** sliders for manual tweaking.
+- **Gamma / Contrast / Saturate** — color adjustment. **Reset colors**
+  returns all color settings to camera defaults.
+
+**Image**
+- **Sharpen** — SDK sharpening 0–500 (default 150), applied with a noise
+  threshold so flat areas aren't speckled.
+- **Denoise** — 0–100 (default 0), spatial noise reduction done in the app
+  (the camera's own denoise is a no-op on this model — verified). Blends each
+  pixel toward its neighbours, so high values soften detail; pair with Sharpen.
+- **Auto sharpen** — estimates the current frame's noise and sets Sharpen and
+  Denoise automatically (noisier → less sharpen, more denoise). A heuristic
+  starting point.
+- **Demosaic** — raw-to-color algorithm. EA (default) is fast; AHD suppresses
+  false color best but costs more CPU.
+- **Flicker** — anti-banding: DC (default), 50 Hz, or 60 Hz. Leave on DC
+  unless you see rolling bands. In AC modes the firmware locks exposure to
+  coarse steps and auto exposure oscillates — prefer manual exposure there.
+
+**View**
+- **Flip horizontal / vertical** — match on-screen movement to hand movement.
+- **Crosshair** — center reference overlay.
+- **Focus peaking** — highlights in-focus (high-contrast) edges in bright
+  green; turn the scope's focus knob until the most of the subject lights up.
+  **Peak sens** controls how aggressively edges are flagged.
+
+**Capture**
+- **Freeze** — pause the live feed to inspect; press again to resume.
+- **Snapshot** — saves a PNG to `Pictures\ScopeCAM\`.
+- **Save defaults** — stores resolution, exposure mode and values, white
+  balance, color, sharpen/denoise, demosaic, flicker, flips, crosshair, and
+  focus-peaking to `%APPDATA%\ScopeCAM\settings.json`, re-applied on every
+  connect.
+
+**Zoom** — scroll the mouse wheel over the video to zoom (centered on the
+cursor), drag with the left button to pan, and double-click to reset. This is
+a display zoom only; it does not change what Snapshot saves.
+
+## Image quality for PCB work
+
+On connect the app configures the camera for a crisp, low-latency, high-frame-
+rate live view. The notable choices (all found by measurement against the
+MU503):
+
+- **Max USB bandwidth + low latency** — maximum frame-speed level, realtime
+  mode (stale frames dropped), minimum frame-queue depth, raised USB grab
+  thread priority.
+- **30+ fps auto exposure** — exposure capped at the Max ms goal time (default
+  33 ms; the SDK default of 350 ms would cap the feed at ≈3 fps). ~36 fps at
+  1280×960.
+- **Stable auto exposure** — full-frame average metering (the SDK default
+  meters only the brightest 1 %, which chases specular glints), a raised
+  reaction threshold, and damped transitions.
+- **Anti-flicker defaults to DC** — in 50/60 Hz AC mode the firmware quantizes
+  exposure to the mains half-period and auto exposure pumps between steps
+  (~6 Hz brightness oscillation). DC gives continuous exposure that converges
+  and holds.
+- **EA demosaic** instead of the SDK default bilinear, which produced rainbow
+  false color along fine traces and pin edges (verified by A/B captures).
+
+### Reducing ring-light reflections
+
+Specular glare (washed-out white reflections from a ring light) is an optical
+problem, not a software one — software can't recover blown-out highlights. The
+effective fixes, in order of impact: a **cross-polarizer** (polarizing film on
+the light + a crossed analyzer on the lens — the pro standard), a **diffuse
+dome** illuminator, **low-angle/oblique** lighting, or simply **tilting** the
+board so the reflection misses the lens.
+
+## Project layout
+
+```
+src/
+  Program.cs       — entry point
+  MainForm.cs      — UI, camera lifecycle, and the app-side image pipeline
+  VideoView.cs     — fast video surface with wheel-zoom / pan / crosshair / peaking
+  AmcamNative.cs   — P/Invoke declarations over amcam.dll
+  AppSettings.cs   — saved defaults (%APPDATA%\ScopeCAM\settings.json)
+  ScopeCAM.csproj
+docs/superpowers/specs/  — design doc and amendments
+ScopeCAM.exe       — published single-file launcher (gitignored)
+```
+
+Frames are streamed in pull mode: the SDK raises an image event on its own
+thread, and the UI thread pulls the newest 24-bit frame (events are coalesced,
+so the UI never backlogs). Denoise and focus peaking run in that pull path.
 
 ## Design doc
 
