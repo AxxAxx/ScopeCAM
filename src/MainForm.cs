@@ -274,8 +274,14 @@ public class MainForm : Form
         AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_AUTOEXP_THRESHOLD, 10);
         AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_AUTOEXP_EXPOTIME_DAMP, 300);
         AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_AUTOEXP_GAIN_DAMP, 300);
-        // Anti-flicker for AC workbench lighting (default 50 Hz, selectable).
-        AmcamNative.Amcam_put_HZ(_cam, 1);
+        // Anti-flicker default DC: AC modes quantize exposure to the mains
+        // half-period (10 ms at 50 Hz), and this camera's firmware AE cannot
+        // settle between quanta — it oscillates between the two nearest
+        // exposure steps (~6x/s brightness pumping, observed on the MU503
+        // under every AUTOEXP_POLICY). Microscope LED illuminators are DC,
+        // so continuous exposure is the right default; the Flicker selector
+        // remains for AC-lit setups.
+        AmcamNative.Amcam_put_HZ(_cam, 2);
         // Moderate sharpening: radius 2, threshold 0.
         AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING, (2 << 16) | DefaultSharpness);
     }
@@ -324,7 +330,7 @@ public class MainForm : Form
         }
         _sharpSlider.Value = DefaultSharpness;
         _sharpLabel.Text = DefaultSharpness.ToString();
-        _flickerCombo.SelectedIndex = 0; // 50 Hz (matches ApplyStartupDefaults)
+        _flickerCombo.SelectedIndex = 2; // DC (matches ApplyStartupDefaults)
         _flipH.Checked = false;
         _flipV.Checked = false;
         _updatingUi = false;

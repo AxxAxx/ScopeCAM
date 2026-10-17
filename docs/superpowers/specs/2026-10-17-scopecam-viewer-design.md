@@ -105,8 +105,17 @@ Startup configuration (`ApplyStartupDefaults`):
   `OPTION_AUTOEXPOSURE_PERCENT=100` (full-average metering instead of the
   default brightest-1 % metering), `OPTION_AUTOEXP_THRESHOLD=10`,
   `OPTION_AUTOEXP_EXPOTIME_DAMP=300`, `OPTION_AUTOEXP_GAIN_DAMP=300`.
-- `AwbOnce` after stream start (automatic color), `put_HZ(1)` (50 Hz
-  anti-flicker), `OPTION_SHARPENING` radius 2 / strength 150.
+- `AwbOnce` after stream start (automatic color), `OPTION_SHARPENING`
+  radius 2 / strength 150.
+- Anti-flicker defaults to DC (`put_HZ(2)`), NOT 50 Hz. Root cause found
+  by logging every AE adjustment + sampled frame brightness: in AC mode
+  the firmware quantizes exposure to 10 ms steps and its AE oscillates
+  ~6x/s between the two quanta bracketing the ideal exposure (30 ms@100 %
+  ↔ 20 ms@133 %; brightness swung 117–170). AUTOEXP_POLICY=3 (Gain
+  Preferred) made it worse (gain saturated at 300 %, 10↔20 ms toggling).
+  In DC mode exposure is continuous: AE converged in 0.7 s and made zero
+  adjustments over the next 35 s (brightness 187.1–188.4). White balance
+  was ruled out (temp/tint constant throughout).
 
 New UI: AE target slider (enabled in auto mode), one-push white balance
 button, sharpening slider, flicker selector (50/60 Hz/DC), flip H/V,

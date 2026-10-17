@@ -118,6 +118,9 @@ internal static class AmcamNative
     // pixels (default 1 — twitchy on shiny PCBs), 0/100 = full-frame
     // average. DAMP (thousandths, [0,1000] def 0): higher = smoother,
     // slower exposure/gain transitions.
+    // Auto-exposure policy: 0 = Exposure Only, 1 = Exposure Preferred
+    // (default), 2 = Gain Only, 3 = Gain Preferred.
+    public const uint OPTION_AUTOEXP_POLICY = 0x10;
     public const uint OPTION_AUTOEXP_THRESHOLD = 0x29;
     public const uint OPTION_AUTOEXPOSURE_PERCENT = 0x4a;
     public const uint OPTION_AUTOEXP_EXPOTIME_DAMP = 0x60;
@@ -155,6 +158,12 @@ internal static class AmcamNative
     // has started. Callbacks are optional (pass IntPtr.Zero).
     [DllImport(Dll)]
     public static extern int Amcam_AwbOnce(IntPtr h, IntPtr fnTTProc, IntPtr ctxTT);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_get_TempTint(IntPtr h, out int temp, out int tint);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_get_MaxAutoExpoTimeAGain(IntPtr h, out uint maxTimeUs, out ushort maxGain);
 
     [DllImport(Dll)]
     public static extern int Amcam_put_HFlip(IntPtr h, int hflip);

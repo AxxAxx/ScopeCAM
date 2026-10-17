@@ -28,7 +28,11 @@ a time.
 - **Auto white balance** — one-push color correction (also runs automatically
   on connect). Re-run it after changing lighting.
 - **Sharpen** — SDK sharpening strength 0–500 (default 150).
-- **Flicker** — anti-banding for AC lighting: 50 Hz (default), 60 Hz, or DC.
+- **Flicker** — anti-banding: DC (default), 50 Hz, or 60 Hz. Leave on DC
+  unless you see rolling bands in the image. Note: in the AC modes the
+  camera firmware locks exposure to coarse steps (10 ms at 50 Hz) and its
+  auto exposure oscillates between steps — if you need an AC mode, prefer
+  manual exposure.
 - **Flip horizontal/vertical** — match image movement to hand movement.
 - **Crosshair** — center reference overlay.
 - **Freeze** — pause the live feed to inspect; Resume to continue.
@@ -46,8 +50,14 @@ On connect the app configures the camera for crisp, high-framerate live view:
 - Auto-exposure anti-hunting: full-frame average metering (the SDK default
   meters only the brightest 1 % of pixels, which chases specular solder
   reflections), raised reaction threshold, and damped exposure/gain
-  transitions — fixes the back-and-forth brightness flicker.
-- One-push auto white balance, 50 Hz anti-flicker, moderate sharpening.
+  transitions.
+- Anti-flicker defaults to DC. This matters: in 50/60 Hz AC mode the
+  firmware quantizes exposure to the mains half-period and its auto
+  exposure oscillates between the two steps bracketing the ideal exposure
+  (measured ~6 Hz brightness pumping on the MU503, under every
+  AUTOEXP_POLICY setting). With DC mode auto exposure converges in under
+  a second and stays put.
+- One-push auto white balance, moderate sharpening.
 
 ## How it works
 
