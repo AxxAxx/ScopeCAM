@@ -80,10 +80,23 @@ public class MainForm : Form
     private readonly Stopwatch _fpsClock = Stopwatch.StartNew();
     private int _fpsFrames;
 
+    private TableLayoutPanel _panel = null!;
+    private TrackBar[] _allSliders = Array.Empty<TrackBar>();
+
+    // Palette (light, professional; works with native themed controls).
+    private static readonly Color Accent = Color.FromArgb(37, 99, 235);   // blue-600
+    private static readonly Color AccentHover = Color.FromArgb(29, 78, 216);
+    private static readonly Color PanelBg = Color.FromArgb(246, 247, 249);
+    private static readonly Color Rule = Color.FromArgb(214, 217, 222);
+    private static readonly Color HeaderFg = Color.FromArgb(107, 114, 128);
+    private static readonly Color TextFg = Color.FromArgb(31, 41, 55);
+
     public MainForm()
     {
         Text = "ScopeCAM";
         AutoScaleMode = AutoScaleMode.Dpi;
+        Font = new Font("Segoe UI", 9f);
+        BackColor = Color.White;
         ClientSize = new Size(1280, 880);
         MinimumSize = new Size(820, 700);
 
@@ -93,6 +106,8 @@ public class MainForm : Form
 
         _statusCamera.Text = "Searching for camera…";
         _statusFps.Alignment = ToolStripItemAlignment.Right;
+        _status.BackColor = PanelBg;
+        _status.SizingGrip = false;
         _status.Items.Add(_statusCamera);
         _status.Items.Add(new ToolStripStatusLabel { Spring = true });
         _status.Items.Add(_statusFps);
@@ -100,6 +115,13 @@ public class MainForm : Form
         Controls.Add(_view);
         Controls.Add(controls);
         Controls.Add(_status);
+
+        _allSliders = new[]
+        {
+            _aeTargetSlider, _maxAutoSlider, _expoSlider, _gainSlider,
+            _wbTempSlider, _wbTintSlider, _gammaSlider, _contrastSlider,
+            _satSlider, _sharpSlider, _denoiseSlider, _peakSlider,
+        };
 
         _reconnectTimer.Interval = 2000;
         _reconnectTimer.Tick += (_, _) => TryConnect();
@@ -129,14 +151,23 @@ public class MainForm : Form
         var panel = new TableLayoutPanel
         {
             Dock = DockStyle.Right,
-            Width = 310,
+            Width = 316,
             AutoScroll = true,
-            Padding = new Padding(8, 2, 8, 2),
+            BackColor = PanelBg,
+            ForeColor = TextFg,
+            Padding = new Padding(14, 4, 12, 8),
             ColumnCount = 3,
         };
+        _panel = panel;
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));     // names
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); // sliders
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64)); // numeric boxes
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 60)); // numeric boxes
+        // Thin rule separating the panel from the video area.
+        panel.Paint += (_, e) =>
+        {
+            using var rulePen = new Pen(Rule);
+            e.Graphics.DrawLine(rulePen, 0, 0, 0, panel.Height);
+        };
 
         void AddFullRow(Control c)
         {
@@ -173,8 +204,10 @@ public class MainForm : Form
             slider.Maximum = max;
             slider.TickStyle = TickStyle.None;
             slider.AutoSize = false;
-            slider.Height = 26;
+            slider.Height = 24;
+            slider.BackColor = PanelBg;
             box.TextAlign = HorizontalAlignment.Right;
+            box.BorderStyle = BorderStyle.FixedSingle;
             slider.ValueChanged += (_, _) =>
             {
                 // Mirror the slider into the box. The only time we DON'T is a
@@ -197,16 +230,52 @@ public class MainForm : Form
             AddLabeledRow(name, slider, box);
         }
 
-        Label Header(string text) => new()
+        // Section header: small uppercase label + a thin rule under it.
+        void AddSection(string text)
         {
-            Text = text,
-            AutoSize = true,
-            Font = new Font(Font, FontStyle.Bold),
-            Margin = new Padding(0, 7, 0, 1),
-        };
+            AddFullRow(new Label
+            {
+                Text = text.ToUpperInvariant(),
+                AutoSize = true,
+                ForeColor = HeaderFg,
+                Font = new Font("Segoe UI Semibold", 8.25f),
+                Margin = new Padding(1, 12, 0, 2),
+            });
+            AddFullRow(new Panel
+            {
+                Height = 1,
+                BackColor = Rule,
+                Margin = new Padding(0, 0, 0, 6),
+                Anchor = AnchorStyles.Left | AnchorStyles.Right,
+            });
+        }
+
+        void StyleButton(Button b, bool primary)
+        {
+            b.FlatStyle = FlatStyle.Flat;
+            b.AutoSize = true;
+            b.Padding = new Padding(10, 4, 10, 4);
+            b.Margin = new Padding(0, 0, 6, 0);
+            b.Cursor = Cursors.Hand;
+            b.UseVisualStyleBackColor = false;
+            if (primary)
+            {
+                b.BackColor = Accent;
+                b.ForeColor = Color.White;
+                b.FlatAppearance.BorderColor = Accent;
+                b.FlatAppearance.MouseOverBackColor = AccentHover;
+            }
+            else
+            {
+                b.BackColor = Color.White;
+                b.ForeColor = TextFg;
+                b.FlatAppearance.BorderColor = Rule;
+                b.FlatAppearance.MouseOverBackColor = Color.FromArgb(235, 238, 242);
+            }
+        }
 
         // --- Camera ---
-        AddFullRow(Header("Camera"));
+        AddSection("Camera");
         _resCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _resCombo.SelectedIndexChanged += OnResolutionChanged;
         AddLabeledRow("Size", _resCombo);
@@ -215,7 +284,7 @@ public class MainForm : Form
         AddLabeledRow("Frame rate", _fpsLabel);
 
         // --- Exposure ---
-        AddFullRow(Header("Exposure"));
+        AddSection("Exposure");
 
         _autoExpo.Text = "Auto exposure";
         _autoExpo.AutoSize = true;
@@ -257,9 +326,10 @@ public class MainForm : Form
             v => AmcamNative.Amcam_put_ExpoAGain(_cam, (ushort)v));
 
         // --- Color ---
-        AddFullRow(Header("Color"));
+        AddSection("Color");
 
         _wbButton.Text = "Auto white balance";
+        StyleButton(_wbButton, false);
         _wbButton.AutoSize = true;
         _wbButton.Click += OnWhiteBalance;
         AddFullRow(_wbButton);
@@ -276,12 +346,12 @@ public class MainForm : Form
             v => AmcamNative.Amcam_put_Saturation(_cam, v));
 
         _resetColorButton.Text = "Reset colors";
-        _resetColorButton.AutoSize = true;
+        StyleButton(_resetColorButton, false);
         _resetColorButton.Click += OnResetColors;
         AddFullRow(_resetColorButton);
 
         // --- Image ---
-        AddFullRow(Header("Image"));
+        AddSection("Image");
 
         AddIntSlider("Sharpen", _sharpSlider, _sharpBox, 0, 500,
             v => AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING, SharpenValue(v)));
@@ -294,7 +364,7 @@ public class MainForm : Form
         // Auto sharpen: analyze the current frame's noise and pick Sharpen
         // and Denoise automatically.
         _autoSharpenButton.Text = "Auto sharpen";
-        _autoSharpenButton.AutoSize = true;
+        StyleButton(_autoSharpenButton, false);
         _autoSharpenButton.Click += OnAutoSharpen;
         AddFullRow(_autoSharpenButton);
 
@@ -314,7 +384,7 @@ public class MainForm : Form
         AddLabeledRow("Flicker", _flickerCombo);
 
         // --- View ---
-        AddFullRow(Header("View"));
+        AddSection("View");
 
         _flipH.Text = "Flip horizontal";
         _flipH.AutoSize = true;
@@ -344,15 +414,16 @@ public class MainForm : Form
 
         AddIntSlider("Peak sens", _peakSlider, _peakBox, 0, 100, v => _peakSensitivity = v);
 
-        var buttonRow = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 6, 0, 0) };
+        AddSection("Capture");
+        var buttonRow = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 2, 0, 4) };
         _freezeButton.Text = "Freeze";
-        _freezeButton.AutoSize = true;
+        StyleButton(_freezeButton, false);
         _freezeButton.Click += OnFreeze;
         _snapshotButton.Text = "Snapshot";
-        _snapshotButton.AutoSize = true;
+        StyleButton(_snapshotButton, true);
         _snapshotButton.Click += OnSnapshot;
         _saveDefaultsButton.Text = "Save defaults";
-        _saveDefaultsButton.AutoSize = true;
+        StyleButton(_saveDefaultsButton, true);
         _saveDefaultsButton.Click += OnSaveDefaults;
         buttonRow.Controls.Add(_freezeButton);
         buttonRow.Controls.Add(_snapshotButton);
@@ -1026,6 +1097,7 @@ public class MainForm : Form
             _expoSlider.Enabled = _expoBox.Enabled = false;
             _gainSlider.Enabled = _gainBox.Enabled = false;
         }
+        RepaintSliders();
     }
 
     private void UpdateExposureControlsEnabled()
@@ -1036,6 +1108,16 @@ public class MainForm : Form
         _expoSlider.Enabled = _expoBox.Enabled = !auto;
         bool gainOk = !auto && _gainMax > _gainMin;
         _gainSlider.Enabled = _gainBox.Enabled = gainOk;
+        RepaintSliders();
+    }
+
+    // WinForms TrackBar does not repaint its themed thumb when Enabled
+    // changes (it stays greyed until the user interacts). Forcing a repaint
+    // keeps the painted state in sync with the actual enabled state.
+    private void RepaintSliders()
+    {
+        foreach (var s in _allSliders)
+            s.Refresh();
     }
 
     private void OnAutoExpoChanged(object? sender, EventArgs e)

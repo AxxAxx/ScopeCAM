@@ -1,9 +1,14 @@
 # ScopeCAM
 
-A minimal Windows viewer for AmScope (ToupTek) microscope cameras: live feed,
-exposure and gain sliders, auto-exposure toggle, and PNG snapshots. It
-auto-connects to the first camera it finds and reconnects automatically if
-the camera is unplugged.
+A Windows viewer for AmScope (ToupTek) microscope cameras: live feed with a
+sectioned control panel (Camera, Exposure, Color, Image, View, Capture),
+exposure/gain/white-balance/color controls, focus peaking, mouse-wheel zoom,
+and PNG snapshots. It auto-connects to the first camera it finds and
+reconnects automatically if the camera is unplugged.
+
+The UI uses a light, flat theme (Segoe UI, sectioned groups, accent-blue
+primary buttons) and renders video through a custom fast-scaling control so
+it stays responsive at full resolution.
 
 ## Running
 
