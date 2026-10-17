@@ -85,6 +85,20 @@ internal static class AmcamNative
     [DllImport(Dll)]
     public static extern int Amcam_get_Size(IntPtr h, out int width, out int height);
 
+    // Returns the number of supported resolutions (negative = error).
+    [DllImport(Dll)]
+    public static extern int Amcam_get_ResolutionNumber(IntPtr h);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_get_Resolution(IntPtr h, uint index, out int width, out int height);
+
+    // Select resolution by index; only valid while the stream is stopped.
+    [DllImport(Dll)]
+    public static extern int Amcam_put_eSize(IntPtr h, uint index);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_get_eSize(IntPtr h, out uint index);
+
     [DllImport(Dll)]
     public static extern int Amcam_get_ExpTimeRange(IntPtr h, out uint min, out uint max, out uint def);
 
@@ -121,6 +135,10 @@ internal static class AmcamNative
     // Auto-exposure policy: 0 = Exposure Only, 1 = Exposure Preferred
     // (default), 2 = Gain Only, 3 = Gain Preferred.
     public const uint OPTION_AUTOEXP_POLICY = 0x10;
+
+    // Demosaic method: 0 = bilinear (default), 1 = VNG, 2 = PPG, 3 = AHD,
+    // 4 = EA. Bilinear produces false color on fine detail.
+    public const uint OPTION_DEMOSAIC = 0x12;
     public const uint OPTION_AUTOEXP_THRESHOLD = 0x29;
     public const uint OPTION_AUTOEXPOSURE_PERCENT = 0x4a;
     public const uint OPTION_AUTOEXP_EXPOTIME_DAMP = 0x60;

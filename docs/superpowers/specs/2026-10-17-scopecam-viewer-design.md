@@ -85,8 +85,24 @@ snapshot work. (Build verified by Claude; runtime verification by Axel.)
 
 ## Out of scope (YAGNI)
 
-Resolution switching, recording video, measurement overlays, multiple
-cameras.
+Recording video, measurement overlays, multiple cameras.
+
+## Amendment 2026-10-17 (2): resolution, save defaults, numeric input,
+## false-color fix
+
+- Resolution selector (get_ResolutionNumber/get_Resolution/put_eSize).
+  Switch is done in place (Stop → put_eSize → restart stream); falls back
+  to a full reconnect if that fails. Full 2560×1922 ≈ 14 fps (USB 3.0
+  throughput limit), 1280×960 ≈ 36 fps.
+- "Save defaults" persists resolution/exposure/sharpen/flicker/flips/
+  crosshair to %APPDATA%\ScopeCAM\settings.json, applied on every connect.
+- Every slider got a numeric entry box (Enter or focus-leave commits;
+  accepts both . and , decimals).
+- Color artifact (user-reported rainbow fringing on traces): root cause is
+  the SDK's default bilinear demosaic, amplified by sharpening. Verified by
+  A/B frame captures (bilinear/VNG/AHD/EA × sharpening 0/150). Fix:
+  OPTION_DEMOSAIC = 4 (EA, Edge Aware) — equally clean as AHD and cheapest
+  on CPU (AHD measured ~95 % of a core at 1280×960/36 fps, EA ~66 %).
 
 ## Amendment 2026-10-17: high framerate, auto color, PCB image quality
 

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing.Imaging;
+using System.Globalization;
 
 namespace ScopeCAM;
 
@@ -11,22 +12,24 @@ public class MainForm : Form
     private const int DefaultSharpness = 150;    // moderate sharpening (range 0–500)
 
     private readonly PictureBox _view = new();
+    private readonly ComboBox _resCombo = new();
     private readonly CheckBox _autoExpo = new();
     private readonly TrackBar _aeTargetSlider = new();
-    private readonly Label _aeTargetLabel = new();
+    private readonly TextBox _aeTargetBox = new();
     private readonly TrackBar _expoSlider = new();
-    private readonly Label _expoLabel = new();
+    private readonly TextBox _expoBox = new();
     private readonly TrackBar _gainSlider = new();
-    private readonly Label _gainLabel = new();
+    private readonly TextBox _gainBox = new();
     private readonly Button _wbButton = new();
     private readonly TrackBar _sharpSlider = new();
-    private readonly Label _sharpLabel = new();
+    private readonly TextBox _sharpBox = new();
     private readonly ComboBox _flickerCombo = new();
     private readonly CheckBox _flipH = new();
     private readonly CheckBox _flipV = new();
     private readonly CheckBox _crosshair = new();
     private readonly Button _freezeButton = new();
     private readonly Button _snapshotButton = new();
+    private readonly Button _saveDefaultsButton = new();
     private readonly StatusStrip _status = new();
     private readonly ToolStripStatusLabel _statusCamera = new();
     private readonly ToolStripStatusLabel _statusFps = new();
@@ -37,6 +40,9 @@ public class MainForm : Form
     private Bitmap? _frame;
     private int _framePending; // coalesce image events so the UI thread never backlogs
     private bool _frozen;
+    private string _deviceName = "";
+    private AppSettings? _settings = AppSettings.Load();
+    private int _pendingResolution = -1; // resolution to apply on next connect
 
     private uint _expoMinUs = 1, _expoMaxUs = 1;
     private ushort _gainMin = 100, _gainMax = 100;
@@ -48,8 +54,8 @@ public class MainForm : Form
     public MainForm()
     {
         Text = "ScopeCAM";
-        ClientSize = new Size(1240, 760);
-        MinimumSize = new Size(760, 520);
+        ClientSize = new Size(1240, 800);
+        MinimumSize = new Size(760, 560);
 
         _view.Dock = DockStyle.Fill;
         _view.SizeMode = PictureBoxSizeMode.Zoom;
@@ -80,14 +86,14 @@ public class MainForm : Form
         var panel = new TableLayoutPanel
         {
             Dock = DockStyle.Right,
-            Width = 290,
+            Width = 300,
             AutoScroll = true,
             Padding = new Padding(8),
             ColumnCount = 3,
         };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));     // names
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); // sliders
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 62)); // readouts
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64)); // numeric boxes
 
         void AddFullRow(Control c)
         {
@@ -96,17 +102,28 @@ public class MainForm : Form
             panel.SetColumnSpan(c, 3);
         }
 
-        void AddSliderRow(string name, TrackBar slider, Label valueLabel)
+        void AddLabeledRow(string name, Control middle, Control? right = null)
         {
             int row = panel.RowCount++;
-            slider.TickStyle = TickStyle.None;
-            slider.Dock = DockStyle.Fill;
-            valueLabel.Text = "—";
-            valueLabel.AutoSize = true;
-            valueLabel.Anchor = AnchorStyles.Left;
             panel.Controls.Add(new Label { Text = name, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-            panel.Controls.Add(slider, 1, row);
-            panel.Controls.Add(valueLabel, 2, row);
+            middle.Dock = DockStyle.Fill;
+            panel.Controls.Add(middle, 1, row);
+            if (right is not null)
+            {
+                right.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+                panel.Controls.Add(right, 2, row);
+            }
+            else
+            {
+                panel.SetColumnSpan(middle, 2);
+            }
+        }
+
+        void AddSliderRow(string name, TrackBar slider, TextBox box)
+        {
+            slider.TickStyle = TickStyle.None;
+            box.TextAlign = HorizontalAlignment.Right;
+            AddLabeledRow(name, slider, box);
         }
 
         Label Header(string text) => new()
@@ -116,6 +133,12 @@ public class MainForm : Form
             Font = new Font(Font, FontStyle.Bold),
             Margin = new Padding(0, 10, 0, 2),
         };
+
+        // --- Camera ---
+        AddFullRow(Header("Camera"));
+        _resCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        _resCombo.SelectedIndexChanged += OnResolutionChanged;
+        AddLabeledRow("Size", _resCombo);
 
         // --- Exposure ---
         AddFullRow(Header("Exposure"));
@@ -128,15 +151,35 @@ public class MainForm : Form
         _aeTargetSlider.Minimum = 16;
         _aeTargetSlider.Maximum = 220;
         _aeTargetSlider.ValueChanged += OnAeTargetSlider;
-        AddSliderRow("Target", _aeTargetSlider, _aeTargetLabel);
+        AddSliderRow("Target", _aeTargetSlider, _aeTargetBox);
+        WireNumericBox(_aeTargetBox, v =>
+        {
+            int target = (int)Math.Clamp(Math.Round(v), 16, 220);
+            SetSliderSafe(_aeTargetSlider, target);
+            OnAeTargetSlider(null, EventArgs.Empty);
+        });
 
         _expoSlider.Minimum = 0;
         _expoSlider.Maximum = SliderSteps;
         _expoSlider.ValueChanged += OnExposureSlider;
-        AddSliderRow("Time", _expoSlider, _expoLabel);
+        AddSliderRow("Time ms", _expoSlider, _expoBox);
+        WireNumericBox(_expoBox, v =>
+        {
+            uint expoUs = (uint)Math.Clamp(Math.Round(v * 1000.0), _expoMinUs, _expoMaxUs);
+            if (_cam == IntPtr.Zero) return;
+            AmcamNative.Amcam_put_ExpoTime(_cam, expoUs);
+            SetSliderSafe(_expoSlider, ExposureToSlider(expoUs));
+            SetExposureText(expoUs);
+        });
 
         _gainSlider.ValueChanged += OnGainSlider;
-        AddSliderRow("Gain", _gainSlider, _gainLabel);
+        AddSliderRow("Gain %", _gainSlider, _gainBox);
+        WireNumericBox(_gainBox, v =>
+        {
+            int gain = (int)Math.Clamp(Math.Round(v), _gainSlider.Minimum, _gainSlider.Maximum);
+            SetSliderSafe(_gainSlider, gain);
+            OnGainSlider(null, EventArgs.Empty);
+        });
 
         // --- Color & image ---
         AddFullRow(Header("Color && image"));
@@ -149,16 +192,18 @@ public class MainForm : Form
         _sharpSlider.Minimum = 0;
         _sharpSlider.Maximum = 500;
         _sharpSlider.ValueChanged += OnSharpnessSlider;
-        AddSliderRow("Sharpen", _sharpSlider, _sharpLabel);
+        AddSliderRow("Sharpen", _sharpSlider, _sharpBox);
+        WireNumericBox(_sharpBox, v =>
+        {
+            int s = (int)Math.Clamp(Math.Round(v), 0, 500);
+            SetSliderSafe(_sharpSlider, s);
+            OnSharpnessSlider(null, EventArgs.Empty);
+        });
 
         _flickerCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _flickerCombo.Items.AddRange(new object[] { "50 Hz lighting", "60 Hz lighting", "DC lighting" });
         _flickerCombo.SelectedIndexChanged += OnFlickerChanged;
-        var flickerRow = panel.RowCount++;
-        panel.Controls.Add(new Label { Text = "Flicker", AutoSize = true, Anchor = AnchorStyles.Left }, 0, flickerRow);
-        panel.Controls.Add(_flickerCombo, 1, flickerRow);
-        panel.SetColumnSpan(_flickerCombo, 2);
-        _flickerCombo.Dock = DockStyle.Fill;
+        AddLabeledRow("Flicker", _flickerCombo);
 
         // --- View ---
         AddFullRow(Header("View"));
@@ -185,13 +230,51 @@ public class MainForm : Form
         _snapshotButton.Text = "Snapshot";
         _snapshotButton.AutoSize = true;
         _snapshotButton.Click += OnSnapshot;
+        _saveDefaultsButton.Text = "Save defaults";
+        _saveDefaultsButton.AutoSize = true;
+        _saveDefaultsButton.Click += OnSaveDefaults;
         buttonRow.Controls.Add(_freezeButton);
         buttonRow.Controls.Add(_snapshotButton);
+        buttonRow.Controls.Add(_saveDefaultsButton);
         AddFullRow(buttonRow);
 
         SetConnectedControlsEnabled(false);
         return panel;
     }
+
+    /// <summary>Numeric entry: committed on Enter or when leaving the box.</summary>
+    private void WireNumericBox(TextBox box, Action<double> apply)
+    {
+        void Commit()
+        {
+            if (_updatingUi || !box.Enabled)
+                return;
+            var text = box.Text.Trim().Replace(',', '.');
+            if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double v))
+                apply(v);
+            else
+                _view.Invalidate(); // leave stale text; next sync corrects it
+        }
+        box.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter)
+            {
+                e.SuppressKeyPress = true;
+                Commit();
+            }
+        };
+        box.Leave += (_, _) => Commit();
+    }
+
+    private void SetSliderSafe(TrackBar slider, int value)
+    {
+        _updatingUi = true;
+        slider.Value = Math.Clamp(value, slider.Minimum, slider.Maximum);
+        _updatingUi = false;
+    }
+
+    private void SetExposureText(uint expoUs) =>
+        _expoBox.Text = (expoUs / 1000.0).ToString("0.0#", CultureInfo.CurrentCulture);
 
     // ---------- Connection ----------
 
@@ -212,6 +295,7 @@ public class MainForm : Form
         }
 
         var device = devices[0];
+        _deviceName = device.displayname;
         _cam = AmcamNative.Amcam_Open(device.id);
         if (_cam == IntPtr.Zero)
         {
@@ -220,23 +304,16 @@ public class MainForm : Form
             return;
         }
 
-        if (!AmcamNative.Ok(AmcamNative.Amcam_get_Size(_cam, out int width, out int height)))
-        {
-            CloseCamera();
-            _statusCamera.Text = "Failed to query camera resolution — retrying…";
-            _reconnectTimer.Start();
-            return;
-        }
+        // Resolution must be selected before the stream starts. A pending
+        // request (failed in-place switch) wins over the saved default.
+        int desired = _pendingResolution >= 0 ? _pendingResolution : _settings?.ResolutionIndex ?? -1;
+        _pendingResolution = -1;
+        if (desired >= 0 && desired < AmcamNative.Amcam_get_ResolutionNumber(_cam))
+            AmcamNative.Amcam_put_eSize(_cam, (uint)desired);
 
-        ReadRanges();
-        ApplyStartupDefaults();
+        PopulateResolutions();
 
-        _frame?.Dispose();
-        _frame = new Bitmap(width, height, PixelFormat.Format24bppRgb);
-        _view.Image = _frame;
-
-        _callback = OnCameraEvent;
-        if (!AmcamNative.Ok(AmcamNative.Amcam_StartPullModeWithCallback(_cam, _callback, IntPtr.Zero)))
+        if (!StartStream())
         {
             CloseCamera();
             _statusCamera.Text = "Failed to start camera stream — retrying…";
@@ -247,12 +324,35 @@ public class MainForm : Form
         // Automatic color: one-push auto white balance once frames are flowing.
         AmcamNative.Amcam_AwbOnce(_cam, IntPtr.Zero, IntPtr.Zero);
 
+        if (_settings is { } s)
+            ApplySavedSettings(s);
+
         SyncUiFromCamera();
         _reconnectTimer.Stop();
         _frozen = false;
         _freezeButton.Text = "Freeze";
         SetConnectedControlsEnabled(true);
-        _statusCamera.Text = $"Connected: {device.displayname}  ({width}×{height})";
+        UpdateConnectedStatus();
+    }
+
+    /// <summary>
+    /// Configure and start streaming on the already-open camera. Used for
+    /// both initial connect and resolution changes (after Amcam_Stop).
+    /// </summary>
+    private bool StartStream()
+    {
+        if (!AmcamNative.Ok(AmcamNative.Amcam_get_Size(_cam, out int width, out int height)))
+            return false;
+
+        ReadRanges();
+        ApplyStartupDefaults();
+
+        _frame?.Dispose();
+        _frame = new Bitmap(width, height, PixelFormat.Format24bppRgb);
+        _view.Image = _frame;
+
+        _callback ??= OnCameraEvent;
+        return AmcamNative.Ok(AmcamNative.Amcam_StartPullModeWithCallback(_cam, _callback, IntPtr.Zero));
     }
 
     /// <summary>Startup configuration for crisp, high-framerate live view.</summary>
@@ -282,8 +382,87 @@ public class MainForm : Form
         // so continuous exposure is the right default; the Flicker selector
         // remains for AC-lit setups.
         AmcamNative.Amcam_put_HZ(_cam, 2);
+        // EA (Edge Aware) demosaic: the default bilinear demosaic produces
+        // rainbow false color along fine PCB traces and pin edges (verified
+        // by A/B frame captures). EA removes it at the lowest CPU cost of
+        // the SDK's algorithms (AHD was equally clean but ~95% of a core at
+        // 1280×960/36 fps).
+        AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_DEMOSAIC, 4);
         // Moderate sharpening: radius 2, threshold 0.
         AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING, (2 << 16) | DefaultSharpness);
+    }
+
+    private void ApplySavedSettings(AppSettings s)
+    {
+        AmcamNative.Amcam_put_HZ(_cam, s.FlickerIndex switch { 0 => 1, 1 => 0, _ => 2 });
+        AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING,
+            s.Sharpen == 0 ? 0 : (2 << 16) | Math.Clamp(s.Sharpen, 0, 500));
+        AmcamNative.Amcam_put_HFlip(_cam, s.FlipH ? 1 : 0);
+        AmcamNative.Amcam_put_VFlip(_cam, s.FlipV ? 1 : 0);
+        AmcamNative.Amcam_put_AutoExpoTarget(_cam, (ushort)Math.Clamp(s.AeTarget, 16, 220));
+        if (s.AutoExposure)
+        {
+            AmcamNative.Amcam_put_AutoExpoEnable(_cam, 1);
+        }
+        else
+        {
+            AmcamNative.Amcam_put_AutoExpoEnable(_cam, 0);
+            AmcamNative.Amcam_put_ExpoTime(_cam, Math.Clamp(s.ExposureUs, _expoMinUs, _expoMaxUs));
+            AmcamNative.Amcam_put_ExpoAGain(_cam, (ushort)Math.Clamp(s.GainPercent, _gainMin, _gainMax));
+        }
+
+        _updatingUi = true;
+        _sharpSlider.Value = Math.Clamp(s.Sharpen, 0, 500);
+        _flickerCombo.SelectedIndex = Math.Clamp(s.FlickerIndex, 0, 2);
+        _flipH.Checked = s.FlipH;
+        _flipV.Checked = s.FlipV;
+        _crosshair.Checked = s.Crosshair;
+        _updatingUi = false;
+    }
+
+    private void PopulateResolutions()
+    {
+        _updatingUi = true;
+        _resCombo.Items.Clear();
+        int count = AmcamNative.Amcam_get_ResolutionNumber(_cam);
+        for (uint i = 0; i < count; i++)
+        {
+            if (AmcamNative.Ok(AmcamNative.Amcam_get_Resolution(_cam, i, out int w, out int h)))
+                _resCombo.Items.Add($"{w} × {h}");
+        }
+        if (AmcamNative.Ok(AmcamNative.Amcam_get_eSize(_cam, out uint current)) && current < _resCombo.Items.Count)
+            _resCombo.SelectedIndex = (int)current;
+        _updatingUi = false;
+    }
+
+    private void OnResolutionChanged(object? sender, EventArgs e)
+    {
+        if (_updatingUi || _cam == IntPtr.Zero || _resCombo.SelectedIndex < 0)
+            return;
+
+        AmcamNative.Amcam_Stop(_cam);
+        bool ok = AmcamNative.Ok(AmcamNative.Amcam_put_eSize(_cam, (uint)_resCombo.SelectedIndex))
+                  && StartStream();
+        if (!ok)
+        {
+            // Couldn't switch in place — fall back to a full reconnect.
+            _pendingResolution = _resCombo.SelectedIndex;
+            CloseCamera();
+            _statusCamera.Text = "Switching resolution…";
+            _reconnectTimer.Start();
+            return;
+        }
+        AmcamNative.Amcam_AwbOnce(_cam, IntPtr.Zero, IntPtr.Zero);
+        _frozen = false;
+        _freezeButton.Text = "Freeze";
+        SyncUiFromCamera();
+        UpdateConnectedStatus();
+    }
+
+    private void UpdateConnectedStatus()
+    {
+        AmcamNative.Amcam_get_Size(_cam, out int w, out int h);
+        _statusCamera.Text = $"Connected: {_deviceName}  ({w}×{h})";
     }
 
     private void CloseCamera()
@@ -326,13 +505,11 @@ public class MainForm : Form
         if (AmcamNative.Ok(AmcamNative.Amcam_get_AutoExpoTarget(_cam, out ushort target)))
         {
             _aeTargetSlider.Value = Math.Clamp(target, (ushort)_aeTargetSlider.Minimum, (ushort)_aeTargetSlider.Maximum);
-            _aeTargetLabel.Text = target.ToString();
+            _aeTargetBox.Text = target.ToString();
         }
-        _sharpSlider.Value = DefaultSharpness;
-        _sharpLabel.Text = DefaultSharpness.ToString();
-        _flickerCombo.SelectedIndex = 2; // DC (matches ApplyStartupDefaults)
-        _flipH.Checked = false;
-        _flipV.Checked = false;
+        _sharpBox.Text = _sharpSlider.Value.ToString();
+        if (_flickerCombo.SelectedIndex < 0)
+            _flickerCombo.SelectedIndex = 2; // DC (matches ApplyStartupDefaults)
         _updatingUi = false;
         UpdateExposureControlsEnabled();
         RefreshSlidersFromCamera();
@@ -346,12 +523,12 @@ public class MainForm : Form
         if (AmcamNative.Ok(AmcamNative.Amcam_get_ExpoTime(_cam, out uint expoUs)))
         {
             _expoSlider.Value = ExposureToSlider(expoUs);
-            _expoLabel.Text = FormatExposure(expoUs);
+            SetExposureText(expoUs);
         }
         if (AmcamNative.Ok(AmcamNative.Amcam_get_ExpoAGain(_cam, out ushort gain)))
         {
             _gainSlider.Value = Math.Clamp(gain, (ushort)_gainSlider.Minimum, (ushort)_gainSlider.Maximum);
-            _gainLabel.Text = $"{gain} %";
+            _gainBox.Text = gain.ToString();
         }
         _updatingUi = false;
     }
@@ -420,30 +597,34 @@ public class MainForm : Form
 
     private void SetConnectedControlsEnabled(bool enabled)
     {
+        _resCombo.Enabled = enabled;
         _autoExpo.Enabled = enabled;
         _wbButton.Enabled = enabled;
         _sharpSlider.Enabled = enabled;
+        _sharpBox.Enabled = enabled;
         _flickerCombo.Enabled = enabled;
         _flipH.Enabled = enabled;
         _flipV.Enabled = enabled;
         _freezeButton.Enabled = enabled;
+        _saveDefaultsButton.Enabled = enabled;
         _snapshotButton.Enabled = enabled || _frame is not null;
         if (enabled)
             UpdateExposureControlsEnabled();
         else
         {
-            _aeTargetSlider.Enabled = false;
-            _expoSlider.Enabled = false;
-            _gainSlider.Enabled = false;
+            _aeTargetSlider.Enabled = _aeTargetBox.Enabled = false;
+            _expoSlider.Enabled = _expoBox.Enabled = false;
+            _gainSlider.Enabled = _gainBox.Enabled = false;
         }
     }
 
     private void UpdateExposureControlsEnabled()
     {
         bool auto = _autoExpo.Checked;
-        _aeTargetSlider.Enabled = auto;
-        _expoSlider.Enabled = !auto;
-        _gainSlider.Enabled = !auto && _gainMax > _gainMin;
+        _aeTargetSlider.Enabled = _aeTargetBox.Enabled = auto;
+        _expoSlider.Enabled = _expoBox.Enabled = !auto;
+        bool gainOk = !auto && _gainMax > _gainMin;
+        _gainSlider.Enabled = _gainBox.Enabled = gainOk;
     }
 
     private void OnAutoExpoChanged(object? sender, EventArgs e)
@@ -458,10 +639,14 @@ public class MainForm : Form
 
     private void OnAeTargetSlider(object? sender, EventArgs e)
     {
-        _aeTargetLabel.Text = _aeTargetSlider.Value.ToString();
-        if (_updatingUi || _cam == IntPtr.Zero)
-            return;
-        AmcamNative.Amcam_put_AutoExpoTarget(_cam, (ushort)_aeTargetSlider.Value);
+        if (!_updatingUi)
+        {
+            _updatingUi = true;
+            _aeTargetBox.Text = _aeTargetSlider.Value.ToString();
+            _updatingUi = false;
+            if (_cam != IntPtr.Zero)
+                AmcamNative.Amcam_put_AutoExpoTarget(_cam, (ushort)_aeTargetSlider.Value);
+        }
     }
 
     private void OnExposureSlider(object? sender, EventArgs e)
@@ -470,7 +655,9 @@ public class MainForm : Form
             return;
         uint expoUs = SliderToExposure(_expoSlider.Value);
         AmcamNative.Amcam_put_ExpoTime(_cam, expoUs);
-        _expoLabel.Text = FormatExposure(expoUs);
+        _updatingUi = true;
+        SetExposureText(expoUs);
+        _updatingUi = false;
     }
 
     private void OnGainSlider(object? sender, EventArgs e)
@@ -478,7 +665,9 @@ public class MainForm : Form
         if (_updatingUi || _cam == IntPtr.Zero)
             return;
         AmcamNative.Amcam_put_ExpoAGain(_cam, (ushort)_gainSlider.Value);
-        _gainLabel.Text = $"{_gainSlider.Value} %";
+        _updatingUi = true;
+        _gainBox.Text = _gainSlider.Value.ToString();
+        _updatingUi = false;
     }
 
     private void OnWhiteBalance(object? sender, EventArgs e)
@@ -492,10 +681,15 @@ public class MainForm : Form
     private void OnSharpnessSlider(object? sender, EventArgs e)
     {
         int strength = _sharpSlider.Value;
-        _sharpLabel.Text = strength == 0 ? "off" : strength.ToString();
-        if (_updatingUi || _cam == IntPtr.Zero)
-            return;
-        AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING, (2 << 16) | strength);
+        if (!_updatingUi)
+        {
+            _updatingUi = true;
+            _sharpBox.Text = strength.ToString();
+            _updatingUi = false;
+            if (_cam != IntPtr.Zero)
+                AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING,
+                    strength == 0 ? 0 : (2 << 16) | strength);
+        }
     }
 
     private void OnFlickerChanged(object? sender, EventArgs e)
@@ -509,6 +703,8 @@ public class MainForm : Form
             _ => 2, // DC
         };
         AmcamNative.Amcam_put_HZ(_cam, hz);
+        if (hz != 2 && _autoExpo.Checked)
+            _statusCamera.Text = "Note: in AC mode auto exposure steps coarsely — prefer manual exposure";
     }
 
     private void OnFreeze(object? sender, EventArgs e)
@@ -531,6 +727,37 @@ public class MainForm : Form
         using (var copy = new Bitmap(_frame))
             copy.Save(path, ImageFormat.Png);
         _statusCamera.Text = $"Saved {path}";
+    }
+
+    private void OnSaveDefaults(object? sender, EventArgs e)
+    {
+        if (_cam == IntPtr.Zero)
+            return;
+        AmcamNative.Amcam_get_ExpoTime(_cam, out uint expoUs);
+        AmcamNative.Amcam_get_ExpoAGain(_cam, out ushort gain);
+        var s = new AppSettings
+        {
+            ResolutionIndex = _resCombo.SelectedIndex,
+            AutoExposure = _autoExpo.Checked,
+            AeTarget = _aeTargetSlider.Value,
+            ExposureUs = expoUs,
+            GainPercent = gain,
+            Sharpen = _sharpSlider.Value,
+            FlickerIndex = _flickerCombo.SelectedIndex,
+            FlipH = _flipH.Checked,
+            FlipV = _flipV.Checked,
+            Crosshair = _crosshair.Checked,
+        };
+        try
+        {
+            s.Save();
+            _settings = s;
+            _statusCamera.Text = "Defaults saved — applied on every start";
+        }
+        catch (Exception ex)
+        {
+            _statusCamera.Text = $"Could not save defaults: {ex.Message}";
+        }
     }
 
     private void OnViewPaint(object? sender, PaintEventArgs e)
@@ -562,7 +789,4 @@ public class MainForm : Form
         double t = Math.Log(clamped / _expoMinUs) / Math.Log(_expoMaxUs / (double)_expoMinUs);
         return (int)Math.Clamp(Math.Round(t * SliderSteps), 0, SliderSteps);
     }
-
-    private static string FormatExposure(uint expoUs) =>
-        expoUs >= 1000 ? $"{expoUs / 1000.0:F1} ms" : $"{expoUs} µs";
 }

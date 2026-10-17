@@ -19,6 +19,11 @@ a time.
 
 ## Controls
 
+All sliders also take typed values in the box next to them (Enter or click
+away to apply; both `12.5` and `12,5` work).
+
+- **Size** — camera resolution. Full 2560×1922 runs ~14 fps (the USB 3.0
+  throughput limit); binned 1280×960 runs ~36 fps.
 - **Auto exposure** — on by default. The camera manages exposure/gain; the
   **Target** slider biases how bright auto exposure aims (lower it if shiny
   solder blows out). Uncheck for manual control via the Time/Gain sliders.
@@ -37,6 +42,10 @@ a time.
 - **Crosshair** — center reference overlay.
 - **Freeze** — pause the live feed to inspect; Resume to continue.
 - **Snapshot** — saves a PNG to `Pictures\ScopeCAM\`.
+- **Save defaults** — stores the current resolution, exposure mode and
+  values, sharpening, flicker, flips, and crosshair to
+  `%APPDATA%\ScopeCAM\settings.json`; they are re-applied every time the
+  app connects.
 
 ## Startup tuning (30+ fps, stable auto exposure)
 
@@ -58,6 +67,10 @@ On connect the app configures the camera for crisp, high-framerate live view:
   AUTOEXP_POLICY setting). With DC mode auto exposure converges in under
   a second and stays put.
 - One-push auto white balance, moderate sharpening.
+- EA (Edge Aware) demosaic instead of the SDK default bilinear, which
+  produced rainbow false color along fine traces and pin edges (verified by
+  A/B captures). EA removes the fringing at the lowest CPU cost of the
+  SDK's algorithms.
 
 ## How it works
 
