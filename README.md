@@ -49,9 +49,11 @@ Every slider also takes a typed value in the box beside it (press Enter or
 click away to apply; both `12.5` and `12,5` are accepted).
 
 **Camera**
-- **Size** — camera resolution. Full 2560×1922 runs ~14 fps (the USB 3.0
-  throughput ceiling); binned 1280×960 runs ~36 fps. **Frame rate** is shown
-  live below it.
+- **Size** — camera resolution. Full 2560×1922 runs ~14 fps; binned
+  1280×960 runs ~36 fps. The full-res ceiling is the sensor's readout
+  speed, not USB bandwidth or data size (verified: 8-bit RAW, one-third the
+  bytes of RGB24, gives the same 14 fps), so lower resolution is the only
+  way to a faster feed. **Frame rate** is shown live below it.
 
 **Exposure**
 - **Auto exposure** — on by default. **Target** biases how bright auto
@@ -109,9 +111,11 @@ On connect the app configures the camera for a crisp, low-latency, high-frame-
 rate live view. The notable choices (all found by measurement against the
 MU503):
 
-- **Max USB bandwidth + low latency** — maximum frame-speed level, realtime
-  mode (stale frames dropped), minimum frame-queue depth, raised USB grab
-  thread priority.
+- **Low latency** — maximum frame-speed level, realtime mode (stale frames
+  dropped), minimum frame-queue depth, raised USB grab thread priority.
+  (At full resolution the frame rate is capped by sensor readout, ~14 fps,
+  not by these settings; they minimize the delay, and raise the rate at
+  lower resolutions.)
 - **30+ fps auto exposure** — exposure capped at the Max ms goal time (default
   33 ms; the SDK default of 350 ms would cap the feed at ≈3 fps). ~36 fps at
   1280×960.
