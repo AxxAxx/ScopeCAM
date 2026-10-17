@@ -215,7 +215,14 @@ public class MainForm : Form
                 // while the user is typing in that same box — then we leave
                 // their text alone. A user drag always updates the box.
                 if (!(_updatingUi && box.Focused))
+                {
                     box.Text = slider.Value.ToString();
+                    // Force an immediate repaint. During a drag the live video
+                    // pump keeps the message queue busy, which otherwise
+                    // starves the box's WM_PAINT so the number looks frozen
+                    // until the box is clicked.
+                    box.Update();
+                }
                 // The camera write is gated so programmatic moves (sync, load
                 // defaults) don't echo back to the device.
                 if (!_updatingUi && _cam != IntPtr.Zero) apply(slider.Value);
@@ -1138,6 +1145,7 @@ public class MainForm : Form
         AmcamNative.Amcam_put_ExpoTime(_cam, expoUs);
         _updatingUi = true;
         SetExposureText(expoUs);
+        _expoBox.Update(); // force repaint (video pump starves the paint queue mid-drag)
         _updatingUi = false;
     }
 
