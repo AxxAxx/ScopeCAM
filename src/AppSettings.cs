@@ -26,7 +26,8 @@ public class AppSettings
     public int Saturation { get; set; } = 128;
     public int Denoise { get; set; }
     public int DemosaicIndex { get; set; } // combo order: EA, AHD, VNG, PPG, bilinear
-    public int Smooth { get; set; } // temporal averaging level 0-4
+    public bool FocusPeaking { get; set; }
+    public int PeakSensitivity { get; set; } = 50;
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

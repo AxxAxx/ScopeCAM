@@ -38,13 +38,15 @@ public class MainForm : Form
     private readonly TextBox _sharpBox = new();
     private readonly TrackBar _denoiseSlider = new();
     private readonly TextBox _denoiseBox = new();
-    private readonly TrackBar _smoothSlider = new();
-    private readonly TextBox _smoothBox = new();
+    private readonly Button _autoSharpenButton = new();
     private readonly ComboBox _demosaicCombo = new();
     private readonly ComboBox _flickerCombo = new();
     private readonly CheckBox _flipH = new();
     private readonly CheckBox _flipV = new();
     private readonly CheckBox _crosshair = new();
+    private readonly CheckBox _peakCheck = new();
+    private readonly TrackBar _peakSlider = new();
+    private readonly TextBox _peakBox = new();
     private readonly Button _freezeButton = new();
     private readonly Button _snapshotButton = new();
     private readonly Button _saveDefaultsButton = new();
@@ -65,12 +67,11 @@ public class MainForm : Form
     private uint _maxAutoUs = 33_333;    // auto-exposure time cap ("goal time")
 
     // App-side image processing applied in the frame-pull path.
-    private int _smoothLevel;            // temporal averaging: 0 = off, 1..4 = EMA strength
     private int _denoiseLevel;           // spatial denoise: 0..100 blend toward 3x3 average
+    private bool _peaking;               // focus-peaking overlay on/off
+    private int _peakSensitivity = 50;   // 0..100 (higher = more edges highlighted)
     private byte[] _pullBuf = Array.Empty<byte>();   // staging for the latest pulled frame
-    private byte[] _procBuf = Array.Empty<byte>();   // scratch for spatial denoise
-    private ushort[] _smoothAcc = Array.Empty<ushort>();
-    private bool _smoothAccValid;
+    private byte[] _procBuf = Array.Empty<byte>();   // scratch for denoise / peaking
 
     private uint _expoMinUs = 1, _expoMaxUs = 1;
     private ushort _gainMin = 100, _gainMax = 100;
@@ -290,9 +291,12 @@ public class MainForm : Form
         // noise unchanged), so we do it ourselves in the frame pipeline.
         AddIntSlider("Denoise", _denoiseSlider, _denoiseBox, 0, 100, v => _denoiseLevel = v);
 
-        // App-side temporal averaging; no camera call.
-        AddIntSlider("Smooth", _smoothSlider, _smoothBox, 0, 4, _ => { });
-        _smoothSlider.ValueChanged += (_, _) => { _smoothLevel = _smoothSlider.Value; _smoothAccValid = false; };
+        // Auto sharpen: analyze the current frame's noise and pick Sharpen
+        // and Denoise automatically.
+        _autoSharpenButton.Text = "Auto sharpen";
+        _autoSharpenButton.AutoSize = true;
+        _autoSharpenButton.Click += OnAutoSharpen;
+        AddFullRow(_autoSharpenButton);
 
         _demosaicCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _demosaicCombo.Items.AddRange(new object[]
@@ -330,6 +334,16 @@ public class MainForm : Form
         _crosshair.CheckedChanged += (_, _) => { _view.Crosshair = _crosshair.Checked; _view.Invalidate(); };
         AddFullRow(_crosshair);
 
+        // Focus peaking: highlight sharp (in-focus) edges so you can turn the
+        // scope's focus knob until the most of the subject lights up.
+        _peakCheck.Text = "Focus peaking";
+        _peakCheck.AutoSize = true;
+        _peakCheck.Margin = new Padding(3, 1, 3, 1);
+        _peakCheck.CheckedChanged += (_, _) => { if (!_updatingUi) _peaking = _peakCheck.Checked; };
+        AddFullRow(_peakCheck);
+
+        AddIntSlider("Peak sens", _peakSlider, _peakBox, 0, 100, v => _peakSensitivity = v);
+
         var buttonRow = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 6, 0, 0) };
         _freezeButton.Text = "Freeze";
         _freezeButton.AutoSize = true;
@@ -360,7 +374,7 @@ public class MainForm : Form
             _satSlider.Value = AmcamNative.SATURATION_DEF; _satBox.Text = AmcamNative.SATURATION_DEF.ToString();
             _sharpSlider.Value = 150; _sharpBox.Text = "150";
             _denoiseSlider.Value = 0; _denoiseBox.Text = "0";
-            _smoothSlider.Value = 0; _smoothBox.Text = "0";
+            _peakSlider.Value = 50; _peakBox.Text = "50";
             _demosaicCombo.SelectedIndex = 0; // EA
             _flickerCombo.SelectedIndex = 2;  // DC
         });
@@ -515,8 +529,6 @@ public class MainForm : Form
         int stride = (width * 3 + 3) & ~3;
         _pullBuf = new byte[stride * height];
         _procBuf = new byte[stride * height];
-        _smoothAcc = new ushort[stride * height];
-        _smoothAccValid = false;
         Interlocked.Exchange(ref _framePending, 0);
 
         _callback ??= OnCameraEvent;
@@ -589,8 +601,9 @@ public class MainForm : Form
             AmcamNative.Amcam_put_ExpoAGain(_cam, Math.Clamp(gain, _gainMin, _gainMax));
         }
 
-        _smoothLevel = _smoothSlider.Value;
         _denoiseLevel = _denoiseSlider.Value;
+        _peaking = _peakCheck.Checked;
+        _peakSensitivity = _peakSlider.Value;
     }
 
     /// <summary>Load saved defaults into the UI controls (no camera calls).</summary>
@@ -610,9 +623,11 @@ public class MainForm : Form
             _denoiseSlider.Value = Math.Clamp(s.Denoise, 0, 100);
             _denoiseBox.Text = _denoiseSlider.Value.ToString();
             _denoiseLevel = _denoiseSlider.Value;
-            _smoothSlider.Value = Math.Clamp(s.Smooth, 0, 4);
-            _smoothBox.Text = _smoothSlider.Value.ToString();
-            _smoothLevel = _smoothSlider.Value;
+            _peakCheck.Checked = s.FocusPeaking;
+            _peaking = s.FocusPeaking;
+            _peakSlider.Value = Math.Clamp(s.PeakSensitivity, 0, 100);
+            _peakBox.Text = _peakSlider.Value.ToString();
+            _peakSensitivity = _peakSlider.Value;
             _demosaicCombo.SelectedIndex = Math.Clamp(s.DemosaicIndex, 0, 4);
             _flickerCombo.SelectedIndex = Math.Clamp(s.FlickerIndex, 0, 2);
             _gammaSlider.Value = Math.Clamp(s.Gamma, AmcamNative.GAMMA_MIN, AmcamNative.GAMMA_MAX);
@@ -859,26 +874,23 @@ public class MainForm : Form
         var data = _frame.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
         try
         {
-            if (_smoothLevel == 0 && _denoiseLevel == 0)
+            if (_denoiseLevel == 0 && !_peaking)
             {
                 // Fast path: pull straight into the display bitmap.
                 if (!AmcamNative.Ok(AmcamNative.Amcam_PullImageV2(_cam, data.Scan0, 24, ref info)))
                     return;
-                _smoothAccValid = false;
             }
             else
             {
-                // Processed path: pull into a staging buffer, apply temporal
-                // averaging (Smooth) and/or spatial denoise, then copy out.
+                // Processed path: pull into a staging buffer, apply spatial
+                // denoise and/or the focus-peaking overlay, then copy out.
                 if (!PullIntoBuffer(ref info))
                     return;
                 int len = Math.Min(data.Stride * _frame.Height, _pullBuf.Length);
-                if (_smoothLevel > 0)
-                    BlendSmoothedInPlace(len);
-                else
-                    _smoothAccValid = false;
                 if (_denoiseLevel > 0)
                     SpatialDenoise(stride, _frame.Height);
+                if (_peaking)
+                    ApplyPeaking(stride, _frame.Height);
                 CopyToBitmap(data.Scan0, len);
             }
         }
@@ -907,28 +919,38 @@ public class MainForm : Form
         }
     }
 
-    // Temporal exponential averaging, in place on _pullBuf. Strong noise
-    // reduction on static scenes with zero resolution loss; moving objects
-    // ghost slightly at high levels.
-    private unsafe void BlendSmoothedInPlace(int length)
+    // Focus peaking: paint bright green over pixels sitting on a strong
+    // luminance edge. In-focus regions have the most high-contrast detail,
+    // so turning the scope's focus knob to maximize the green tells you when
+    // you're sharp. Reads from _procBuf (a copy) so painted pixels don't
+    // feed back into neighbouring edge calculations.
+    private unsafe void ApplyPeaking(int stride, int height)
     {
-        int shift = _smoothLevel; // 1..4 → blend factor 1/2 .. 1/16
-        fixed (byte* buf = _pullBuf)
-        fixed (ushort* acc = _smoothAcc)
+        // sensitivity 0..100 → edge threshold high..low (per summed RGB)
+        int thr = 240 - _peakSensitivity * 2;   // 240 (few) .. 40 (many)
+        if (thr < 20) thr = 20;
+        int rowBytes = _frame!.Width * 3;
+        fixed (byte* bufp = _pullBuf)
+        fixed (byte* procp = _procBuf)
         {
-            if (!_smoothAccValid)
+            Buffer.MemoryCopy(bufp, procp, _procBuf.Length, (long)stride * height);
+            for (int y = 1; y < height - 1; y++)
             {
-                for (int i = 0; i < length; i++)
-                    acc[i] = (ushort)(buf[i] << 4);
-                _smoothAccValid = true;
-                return; // first frame passes through unchanged
-            }
-            for (int i = 0; i < length; i++)
-            {
-                int a = acc[i];
-                a += ((buf[i] << 4) - a) >> shift;
-                acc[i] = (ushort)a;
-                buf[i] = (byte)(a >> 4);
+                byte* row = procp + y * stride;
+                byte* up = row - stride;
+                byte* dn = row + stride;
+                byte* outRow = bufp + y * stride;
+                for (int x = 3; x < rowBytes - 3; x += 3)
+                {
+                    int gx = Math.Abs((row[x - 3] + row[x - 2] + row[x - 1]) - (row[x + 3] + row[x + 4] + row[x + 5]));
+                    int gy = Math.Abs((up[x] + up[x + 1] + up[x + 2]) - (dn[x] + dn[x + 1] + dn[x + 2]));
+                    if (gx + gy > thr)
+                    {
+                        outRow[x] = 0;        // B
+                        outRow[x + 1] = 255;  // G
+                        outRow[x + 2] = 0;    // R
+                    }
+                }
             }
         }
     }
@@ -985,7 +1007,9 @@ public class MainForm : Form
         _resetColorButton.Enabled = enabled;
         _sharpSlider.Enabled = _sharpBox.Enabled = enabled;
         _denoiseSlider.Enabled = _denoiseBox.Enabled = enabled;
-        _smoothSlider.Enabled = _smoothBox.Enabled = enabled;
+        _autoSharpenButton.Enabled = enabled;
+        _peakCheck.Enabled = enabled;
+        _peakSlider.Enabled = _peakBox.Enabled = enabled;
         _demosaicCombo.Enabled = enabled;
         _flickerCombo.Enabled = enabled;
         _flipH.Enabled = enabled;
@@ -1056,6 +1080,60 @@ public class MainForm : Form
         RefreshWhiteBalanceFromCamera();
     }
 
+    // Auto sharpen: estimate the sensor noise floor from the current frame,
+    // then set Sharpen and Denoise — more noise means less sharpening (so we
+    // don't amplify grain) and more denoising. A heuristic, not magic; it
+    // gives a sensible starting point you can nudge.
+    private void OnAutoSharpen(object? sender, EventArgs e)
+    {
+        if (_cam == IntPtr.Zero || _frame is null)
+            return;
+        double noise = EstimateNoiseFloor();
+        int denoise = (int)Math.Clamp((noise - 2.0) * 7.0, 0, 70);
+        int sharpen = (int)Math.Clamp(260.0 - noise * 22.0, 80, 400);
+        // Setting .Value fires ValueChanged (not a programmatic update), which
+        // updates the box and applies to the camera / _denoiseLevel.
+        _sharpSlider.Value = sharpen;
+        _denoiseSlider.Value = denoise;
+        FlashStatus($"Auto sharpen: sharpen {sharpen}, denoise {denoise}  (noise {noise:F1})");
+    }
+
+    private unsafe double EstimateNoiseFloor()
+    {
+        var rect = new Rectangle(0, 0, _frame!.Width, _frame.Height);
+        var data = _frame.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+        var stds = new List<double>();
+        try
+        {
+            byte* p = (byte*)data.Scan0;
+            int s = data.Stride, bw = 16;
+            int x0 = _frame.Width / 4, x1 = _frame.Width * 3 / 4;
+            int y0 = _frame.Height / 4, y1 = _frame.Height * 3 / 4;
+            for (int by = y0; by + bw <= y1; by += bw)
+                for (int bx = x0; bx + bw <= x1; bx += bw)
+                {
+                    long sum = 0, sum2 = 0; int n = 0;
+                    for (int yy = 0; yy < bw; yy++)
+                    {
+                        byte* r = p + (by + yy) * s + bx * 3;
+                        for (int xx = 0; xx < bw; xx++)
+                        {
+                            int l = r[xx * 3] + r[xx * 3 + 1] + r[xx * 3 + 2];
+                            sum += l; sum2 += (long)l * l; n++;
+                        }
+                    }
+                    double mean = (double)sum / n;
+                    double var = (double)sum2 / n - mean * mean;
+                    stds.Add(Math.Sqrt(var < 0 ? 0 : var) / 3.0); // ~per-channel sigma
+                }
+        }
+        finally { _frame.UnlockBits(data); }
+        if (stds.Count == 0)
+            return 0;
+        stds.Sort();
+        return stds[stds.Count / 10]; // ~10th percentile = flat-area noise floor
+    }
+
     private void OnFlickerChanged(object? sender, EventArgs e)
     {
         if (_updatingUi || _cam == IntPtr.Zero)
@@ -1101,7 +1179,8 @@ public class MainForm : Form
             MaxAutoExpoUs = _maxAutoUs,
             Sharpen = _sharpSlider.Value,
             Denoise = _denoiseSlider.Value,
-            Smooth = _smoothSlider.Value,
+            FocusPeaking = _peakCheck.Checked,
+            PeakSensitivity = _peakSlider.Value,
             DemosaicIndex = _demosaicCombo.SelectedIndex,
             FlickerIndex = _flickerCombo.SelectedIndex,
             FlipH = _flipH.Checked,

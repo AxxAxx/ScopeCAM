@@ -45,16 +45,13 @@ away to apply; both `12.5` and `12,5` work).
 - **Denoise** — 0–100 (default 0), spatial noise reduction done in the app
   (the camera's own denoise is a no-op on this model — verified — so it's
   computed here). Blends each pixel toward its neighbours, so high values
-  soften fine detail; pair with Sharpen. For a still board, **Smooth**
-  (below) cleans noise better without softening.
+  soften fine detail; pair with Sharpen.
+- **Auto sharpen** — analyzes the current frame's noise and sets Sharpen and
+  Denoise automatically (more noise → less sharpening, more denoise). A
+  heuristic starting point; nudge from there.
 - **Demosaic** — the raw-to-color conversion algorithm. EA (default) is
   fast; try AHD if fine detail shows rainbow speckle — it suppresses false
   color best but costs more CPU (may reduce fps at full resolution).
-- **Smooth** — temporal frame averaging (0 = off, 1–4 = stronger). The most
-  effective noise/speckle cleaner for a static board: averages consecutive
-  frames, so grain and color speckle melt away while real detail stays.
-  Moving objects ghost slightly at high levels — use 1–2 while soldering,
-  3–4 for inspection of a still board.
 - **Flicker** — anti-banding: DC (default), 50 Hz, or 60 Hz. Leave on DC
   unless you see rolling bands in the image. Note: in the AC modes the
   camera firmware locks exposure to coarse steps (10 ms at 50 Hz) and its
@@ -62,8 +59,16 @@ away to apply; both `12.5` and `12,5` work).
   manual exposure.
 - **Flip horizontal/vertical** — match image movement to hand movement.
 - **Crosshair** — center reference overlay.
+- **Focus peaking** — highlights in-focus (high-contrast) edges in bright
+  green. Turn the microscope's focus knob until the most of your subject
+  lights up — that's peak focus. **Peak sens** controls how aggressively
+  edges are flagged.
 - **Freeze** — pause the live feed to inspect; Resume to continue.
 - **Snapshot** — saves a PNG to `Pictures\ScopeCAM\`.
+
+**Zoom:** scroll the mouse wheel over the video to zoom in/out (centered on
+the cursor), drag with the left button to pan, and double-click to reset.
+This is a display zoom — it doesn't change what Snapshot saves.
 - **Save defaults** — stores the current resolution, exposure mode and
   values, sharpening, flicker, flips, and crosshair to
   `%APPDATA%\ScopeCAM\settings.json`; they are re-applied every time the
