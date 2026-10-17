@@ -36,6 +36,9 @@ public class MainForm : Form
     private readonly Button _resetColorButton = new();
     private readonly TrackBar _sharpSlider = new();
     private readonly TextBox _sharpBox = new();
+    private readonly TrackBar _denoiseSlider = new();
+    private readonly TextBox _denoiseBox = new();
+    private readonly ComboBox _demosaicCombo = new();
     private readonly ComboBox _flickerCombo = new();
     private readonly CheckBox _flipH = new();
     private readonly CheckBox _flipV = new();
@@ -242,7 +245,20 @@ public class MainForm : Form
         AddFullRow(Header("Image"));
 
         AddIntSlider("Sharpen", _sharpSlider, _sharpBox, 0, 500,
-            v => AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING, v == 0 ? 0 : (2 << 16) | v));
+            v => AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING, SharpenValue(v)));
+
+        AddIntSlider("Denoise", _denoiseSlider, _denoiseBox, 0, 100,
+            v => AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_DENOISE, v));
+
+        _demosaicCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        _demosaicCombo.Items.AddRange(new object[]
+            { "EA (fast)", "AHD (best)", "VNG", "PPG", "Bilinear" });
+        _demosaicCombo.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_updatingUi && _cam != IntPtr.Zero)
+                AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_DEMOSAIC, DemosaicSdkValue(_demosaicCombo.SelectedIndex));
+        };
+        AddLabeledRow("Demosaic", _demosaicCombo);
 
         _flickerCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _flickerCombo.Items.AddRange(new object[] { "50 Hz lighting", "60 Hz lighting", "DC lighting" });
@@ -317,6 +333,15 @@ public class MainForm : Form
 
     private void SetExposureText(uint expoUs) =>
         _expoBox.Text = (expoUs / 1000.0).ToString("0.0#", CultureInfo.CurrentCulture);
+
+    // Sharpening: radius 2, threshold 16 — the threshold keeps flat (noisy)
+    // areas untouched so sharpening doesn't amplify pixel-level speckle.
+    private static int SharpenValue(int strength) =>
+        strength == 0 ? 0 : (16 << 24) | (2 << 16) | strength;
+
+    // Combo order (by usefulness) → SDK demosaic ids.
+    private static int DemosaicSdkValue(int comboIndex) =>
+        comboIndex switch { 0 => 4, 1 => 3, 2 => 1, 3 => 2, _ => 0 };
 
     private void ApplyTempTint() =>
         AmcamNative.Amcam_put_TempTint(_cam, _wbTempSlider.Value, _wbTintSlider.Value);
@@ -445,15 +470,16 @@ public class MainForm : Form
         // the SDK's algorithms (AHD was equally clean but ~95% of a core at
         // 1280×960/36 fps).
         AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_DEMOSAIC, 4);
-        // Moderate sharpening: radius 2, threshold 0.
-        AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING, (2 << 16) | DefaultSharpness);
+        AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_DENOISE, 0);
+        AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING, SharpenValue(DefaultSharpness));
     }
 
     private void ApplySavedSettings(AppSettings s)
     {
         AmcamNative.Amcam_put_HZ(_cam, s.FlickerIndex switch { 0 => 1, 1 => 0, _ => 2 });
-        AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING,
-            s.Sharpen == 0 ? 0 : (2 << 16) | Math.Clamp(s.Sharpen, 0, 500));
+        AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING, SharpenValue(Math.Clamp(s.Sharpen, 0, 500)));
+        AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_DENOISE, Math.Clamp(s.Denoise, 0, 100));
+        AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_DEMOSAIC, DemosaicSdkValue(Math.Clamp(s.DemosaicIndex, 0, 4)));
         AmcamNative.Amcam_put_HFlip(_cam, s.FlipH ? 1 : 0);
         AmcamNative.Amcam_put_VFlip(_cam, s.FlipV ? 1 : 0);
         AmcamNative.Amcam_put_AutoExpoTarget(_cam, (ushort)Math.Clamp(s.AeTarget, 16, 220));
@@ -481,6 +507,9 @@ public class MainForm : Form
         _updatingUi = true;
         _sharpSlider.Value = Math.Clamp(s.Sharpen, 0, 500);
         _sharpBox.Text = _sharpSlider.Value.ToString();
+        _denoiseSlider.Value = Math.Clamp(s.Denoise, 0, 100);
+        _denoiseBox.Text = _denoiseSlider.Value.ToString();
+        _demosaicCombo.SelectedIndex = Math.Clamp(s.DemosaicIndex, 0, 4);
         _flickerCombo.SelectedIndex = Math.Clamp(s.FlickerIndex, 0, 2);
         _flipH.Checked = s.FlipH;
         _flipV.Checked = s.FlipV;
@@ -580,6 +609,9 @@ public class MainForm : Form
         _maxAutoSlider.Value = Math.Clamp(maxMs, _maxAutoSlider.Minimum, _maxAutoSlider.Maximum);
         _maxAutoBox.Text = maxMs.ToString();
         _sharpBox.Text = _sharpSlider.Value.ToString();
+        _denoiseBox.Text = _denoiseSlider.Value.ToString();
+        if (_demosaicCombo.SelectedIndex < 0)
+            _demosaicCombo.SelectedIndex = 0; // EA (matches ApplyStartupDefaults)
         if (_flickerCombo.SelectedIndex < 0)
             _flickerCombo.SelectedIndex = 2; // DC (matches ApplyStartupDefaults)
         _updatingUi = false;
@@ -724,6 +756,8 @@ public class MainForm : Form
         _satSlider.Enabled = _satBox.Enabled = enabled;
         _resetColorButton.Enabled = enabled;
         _sharpSlider.Enabled = _sharpBox.Enabled = enabled;
+        _denoiseSlider.Enabled = _denoiseBox.Enabled = enabled;
+        _demosaicCombo.Enabled = enabled;
         _flickerCombo.Enabled = enabled;
         _flipH.Enabled = enabled;
         _flipV.Enabled = enabled;
@@ -851,6 +885,8 @@ public class MainForm : Form
             Contrast = _contrastSlider.Value,
             Saturation = _satSlider.Value,
             Sharpen = _sharpSlider.Value,
+            Denoise = _denoiseSlider.Value,
+            DemosaicIndex = _demosaicCombo.SelectedIndex,
             FlickerIndex = _flickerCombo.SelectedIndex,
             FlipH = _flipH.Checked,
             FlipV = _flipV.Checked,

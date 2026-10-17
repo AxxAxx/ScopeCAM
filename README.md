@@ -40,7 +40,14 @@ away to apply; both `12.5` and `12,5` work).
   you can then adjust manually.
 - **Gamma / Contrast / Saturate** — color correction; **Reset colors**
   returns all color settings to camera defaults.
-- **Sharpen** — SDK sharpening strength 0–500 (default 150).
+- **Sharpen** — SDK sharpening strength 0–500 (default 150; applied with a
+  noise threshold so flat areas aren't speckled).
+- **Denoise** — 0–100 (default 0). Raise to ~20–40 when the image shows
+  colored pixel noise (happens when auto exposure runs the gain up on
+  shiny/dim scenes).
+- **Demosaic** — the raw-to-color conversion algorithm. EA (default) is
+  fast; try AHD if fine detail shows rainbow speckle — it suppresses false
+  color best but costs more CPU (may reduce fps at full resolution).
 - **Flicker** — anti-banding: DC (default), 50 Hz, or 60 Hz. Leave on DC
   unless you see rolling bands in the image. Note: in the AC modes the
   camera firmware locks exposure to coarse steps (10 ms at 50 Hz) and its

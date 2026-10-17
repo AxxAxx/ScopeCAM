@@ -148,6 +148,9 @@ internal static class AmcamNative
     // 4 = EA. Bilinear produces false color on fine detail.
     public const uint OPTION_DEMOSAIC = 0x12;
 
+    // Denoise strength [0,100], 0 = off.
+    public const uint OPTION_DENOISE = 0x35;
+
     // Latency: USB grab thread priority 0-3 (default 1) and frame queue
     // depths [2,1024] (default 3) — shorter queue = less lag.
     public const uint OPTION_THREAD_PRIORITY = 0x02;

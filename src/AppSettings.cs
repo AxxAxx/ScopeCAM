@@ -24,6 +24,8 @@ public class AppSettings
     public int Gamma { get; set; } = 100;
     public int Contrast { get; set; }
     public int Saturation { get; set; } = 128;
+    public int Denoise { get; set; }
+    public int DemosaicIndex { get; set; } // combo order: EA, AHD, VNG, PPG, bilinear
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
