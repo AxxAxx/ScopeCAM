@@ -48,6 +48,11 @@ away to apply; both `12.5` and `12,5` work).
 - **Demosaic** — the raw-to-color conversion algorithm. EA (default) is
   fast; try AHD if fine detail shows rainbow speckle — it suppresses false
   color best but costs more CPU (may reduce fps at full resolution).
+- **Smooth** — temporal frame averaging (0 = off, 1–4 = stronger). The most
+  effective noise/speckle cleaner for a static board: averages consecutive
+  frames, so grain and color speckle melt away while real detail stays.
+  Moving objects ghost slightly at high levels — use 1–2 while soldering,
+  3–4 for inspection of a still board.
 - **Flicker** — anti-banding: DC (default), 50 Hz, or 60 Hz. Leave on DC
   unless you see rolling bands in the image. Note: in the AC modes the
   camera firmware locks exposure to coarse steps (10 ms at 50 Hz) and its
