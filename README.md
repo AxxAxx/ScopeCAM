@@ -42,9 +42,11 @@ away to apply; both `12.5` and `12,5` work).
   returns all color settings to camera defaults.
 - **Sharpen** — SDK sharpening strength 0–500 (default 150; applied with a
   noise threshold so flat areas aren't speckled).
-- **Denoise** — 0–100 (default 0). Raise to ~20–40 when the image shows
-  colored pixel noise (happens when auto exposure runs the gain up on
-  shiny/dim scenes).
+- **Denoise** — 0–100 (default 0), spatial noise reduction done in the app
+  (the camera's own denoise is a no-op on this model — verified — so it's
+  computed here). Blends each pixel toward its neighbours, so high values
+  soften fine detail; pair with Sharpen. For a still board, **Smooth**
+  (below) cleans noise better without softening.
 - **Demosaic** — the raw-to-color conversion algorithm. EA (default) is
   fast; try AHD if fine detail shows rainbow speckle — it suppresses false
   color best but costs more CPU (may reduce fps at full resolution).

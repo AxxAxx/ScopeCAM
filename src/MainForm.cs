@@ -64,9 +64,11 @@ public class MainForm : Form
     private int _pendingResolution = -1; // resolution to apply on next connect
     private uint _maxAutoUs = 33_333;    // auto-exposure time cap ("goal time")
 
-    // Temporal frame averaging (the "Smooth" control).
-    private int _smoothLevel;            // 0 = off, 1..4 = EMA strength
-    private byte[] _pullBuf = Array.Empty<byte>();
+    // App-side image processing applied in the frame-pull path.
+    private int _smoothLevel;            // temporal averaging: 0 = off, 1..4 = EMA strength
+    private int _denoiseLevel;           // spatial denoise: 0..100 blend toward 3x3 average
+    private byte[] _pullBuf = Array.Empty<byte>();   // staging for the latest pulled frame
+    private byte[] _procBuf = Array.Empty<byte>();   // scratch for spatial denoise
     private ushort[] _smoothAcc = Array.Empty<ushort>();
     private bool _smoothAccValid;
 
@@ -283,8 +285,10 @@ public class MainForm : Form
         AddIntSlider("Sharpen", _sharpSlider, _sharpBox, 0, 500,
             v => AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING, SharpenValue(v)));
 
-        AddIntSlider("Denoise", _denoiseSlider, _denoiseBox, 0, 100,
-            v => AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_DENOISE, v));
+        // App-side spatial denoise. The camera's own OPTION_DENOISE is a
+        // no-op on the MU503 (verified: it reads back 0 and leaves image
+        // noise unchanged), so we do it ourselves in the frame pipeline.
+        AddIntSlider("Denoise", _denoiseSlider, _denoiseBox, 0, 100, v => _denoiseLevel = v);
 
         // App-side temporal averaging; no camera call.
         AddIntSlider("Smooth", _smoothSlider, _smoothBox, 0, 4, _ => { });
@@ -510,6 +514,7 @@ public class MainForm : Form
 
         int stride = (width * 3 + 3) & ~3;
         _pullBuf = new byte[stride * height];
+        _procBuf = new byte[stride * height];
         _smoothAcc = new ushort[stride * height];
         _smoothAccValid = false;
         Interlocked.Exchange(ref _framePending, 0);
@@ -562,7 +567,7 @@ public class MainForm : Form
         AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_DEMOSAIC, DemosaicSdkValue(_demosaicCombo.SelectedIndex));
         // EA demosaic default: the SDK's bilinear default produces rainbow
         // false color on fine PCB detail (verified by A/B captures).
-        AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_DENOISE, _denoiseSlider.Value);
+        // Denoise is done app-side (camera OPTION_DENOISE is a no-op here).
         AmcamNative.Amcam_put_Option(_cam, AmcamNative.OPTION_SHARPENING, SharpenValue(_sharpSlider.Value));
         AmcamNative.Amcam_put_HFlip(_cam, _flipH.Checked ? 1 : 0);
         AmcamNative.Amcam_put_VFlip(_cam, _flipV.Checked ? 1 : 0);
@@ -585,6 +590,7 @@ public class MainForm : Form
         }
 
         _smoothLevel = _smoothSlider.Value;
+        _denoiseLevel = _denoiseSlider.Value;
     }
 
     /// <summary>Load saved defaults into the UI controls (no camera calls).</summary>
@@ -603,6 +609,7 @@ public class MainForm : Form
             _sharpBox.Text = _sharpSlider.Value.ToString();
             _denoiseSlider.Value = Math.Clamp(s.Denoise, 0, 100);
             _denoiseBox.Text = _denoiseSlider.Value.ToString();
+            _denoiseLevel = _denoiseSlider.Value;
             _smoothSlider.Value = Math.Clamp(s.Smooth, 0, 4);
             _smoothBox.Text = _smoothSlider.Value.ToString();
             _smoothLevel = _smoothSlider.Value;
@@ -848,24 +855,31 @@ public class MainForm : Form
 
         var info = new AmcamNative.FrameInfoV2();
         var rect = new Rectangle(0, 0, _frame.Width, _frame.Height);
+        int stride = (_frame.Width * 3 + 3) & ~3;
         var data = _frame.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
         try
         {
-            if (_smoothLevel == 0)
+            if (_smoothLevel == 0 && _denoiseLevel == 0)
             {
+                // Fast path: pull straight into the display bitmap.
                 if (!AmcamNative.Ok(AmcamNative.Amcam_PullImageV2(_cam, data.Scan0, 24, ref info)))
                     return;
                 _smoothAccValid = false;
             }
             else
             {
-                // Temporal exponential averaging: pull into a staging buffer,
-                // blend into a 12.4 fixed-point accumulator, write the
-                // average to the display bitmap. Strong noise reduction on
-                // static scenes; moving objects ghost slightly at high levels.
+                // Processed path: pull into a staging buffer, apply temporal
+                // averaging (Smooth) and/or spatial denoise, then copy out.
                 if (!PullIntoBuffer(ref info))
                     return;
-                BlendSmoothed(data.Scan0, Math.Min(data.Stride * _frame.Height, _pullBuf.Length));
+                int len = Math.Min(data.Stride * _frame.Height, _pullBuf.Length);
+                if (_smoothLevel > 0)
+                    BlendSmoothedInPlace(len);
+                else
+                    _smoothAccValid = false;
+                if (_denoiseLevel > 0)
+                    SpatialDenoise(stride, _frame.Height);
+                CopyToBitmap(data.Scan0, len);
             }
         }
         finally
@@ -893,31 +907,67 @@ public class MainForm : Form
         }
     }
 
-    private unsafe void BlendSmoothed(IntPtr dstPtr, int length)
+    // Temporal exponential averaging, in place on _pullBuf. Strong noise
+    // reduction on static scenes with zero resolution loss; moving objects
+    // ghost slightly at high levels.
+    private unsafe void BlendSmoothedInPlace(int length)
     {
         int shift = _smoothLevel; // 1..4 → blend factor 1/2 .. 1/16
-        fixed (byte* src = _pullBuf)
+        fixed (byte* buf = _pullBuf)
         fixed (ushort* acc = _smoothAcc)
         {
-            byte* dst = (byte*)dstPtr;
             if (!_smoothAccValid)
             {
                 for (int i = 0; i < length; i++)
-                {
-                    acc[i] = (ushort)(src[i] << 4);
-                    dst[i] = src[i];
-                }
+                    acc[i] = (ushort)(buf[i] << 4);
                 _smoothAccValid = true;
-                return;
+                return; // first frame passes through unchanged
             }
             for (int i = 0; i < length; i++)
             {
                 int a = acc[i];
-                a += ((src[i] << 4) - a) >> shift;
+                a += ((buf[i] << 4) - a) >> shift;
                 acc[i] = (ushort)a;
-                dst[i] = (byte)(a >> 4);
+                buf[i] = (byte)(a >> 4);
             }
         }
+    }
+
+    // Spatial denoise, in place on _pullBuf via _procBuf scratch: blend each
+    // pixel toward its 3x3 neighbourhood average by alpha = level/100. Real,
+    // visible noise reduction (unlike the camera's dead OPTION_DENOISE); the
+    // trade-off is some softening, so it pairs with the Sharpen control.
+    private unsafe void SpatialDenoise(int stride, int height)
+    {
+        int alpha = Math.Clamp(_denoiseLevel, 0, 100);     // 0..100
+        int inv = 100 - alpha;
+        int rowBytes = _frame!.Width * 3;
+        fixed (byte* bufp = _pullBuf)
+        fixed (byte* procp = _procBuf)
+        {
+            // Copy edges unchanged, then filter the interior.
+            Buffer.MemoryCopy(bufp, procp, _procBuf.Length, (long)stride * height);
+            for (int y = 1; y < height - 1; y++)
+            {
+                byte* row = bufp + y * stride;
+                byte* up = row - stride;
+                byte* dn = row + stride;
+                byte* outRow = procp + y * stride;
+                for (int x = 3; x < rowBytes - 3; x++)
+                {
+                    int avg = (row[x - 3] + row[x + 3] + up[x] + dn[x] +
+                               (row[x] << 2) + up[x - 3] + up[x + 3] + dn[x - 3] + dn[x + 3]) / 12;
+                    outRow[x] = (byte)((row[x] * inv + avg * alpha) / 100);
+                }
+            }
+            Buffer.MemoryCopy(procp, bufp, _pullBuf.Length, (long)stride * height);
+        }
+    }
+
+    private unsafe void CopyToBitmap(IntPtr dstPtr, int length)
+    {
+        fixed (byte* src = _pullBuf)
+            Buffer.MemoryCopy(src, (void*)dstPtr, length, length);
     }
 
     // ---------- Controls ----------
