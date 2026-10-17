@@ -87,6 +87,25 @@ snapshot work. (Build verified by Claude; runtime verification by Axel.)
 
 Recording video, measurement overlays, multiple cameras.
 
+## Amendment 2026-10-17 (3): goal time, fps display, color controls, latency
+
+- "Max ms" slider/box (auto mode): user-settable cap for auto-exposure time
+  (put_MaxAutoExpoTimeAGain) — the "goal time" that sets the frame rate
+  floor. Default 33 ms, persisted in defaults.
+- Live frame-rate label in the Camera section (mirrors the status bar).
+- Manual white balance: Temp [2000,15000] / Tint [200,2500] sliders via
+  put_TempTint; AwbOnce result lands in the sliders via EVENT_TEMPTINT.
+  Saved defaults store temp/tint; startup AwbOnce only runs when no saved
+  white balance exists (so saved WB isn't overwritten).
+- Color correction: Gamma [20,180], Contrast [-255,255], Saturation
+  [0,255] sliders + Reset colors button.
+- Latency: OPTION_FRAME_DEQUE_LENGTH=2, OPTION_BACKEND_DEQUE_LENGTH=2,
+  OPTION_THREAD_PRIORITY=2 on top of put_RealTime(1). Display switched
+  from PictureBox (high-quality bicubic scaling, slow for 5 MP frames) to
+  a custom double-buffered control with fast bilinear scaling (VideoView).
+- Physics note: full-res 2560×1922 tops out ~14 fps = USB 3.0 throughput
+  (5 MP × 3 B × 14 ≈ 210 MB/s); no software setting can raise that.
+
 ## Amendment 2026-10-17 (2): resolution, save defaults, numeric input,
 ## false-color fix
 

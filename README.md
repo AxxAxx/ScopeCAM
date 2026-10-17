@@ -23,15 +23,21 @@ All sliders also take typed values in the box next to them (Enter or click
 away to apply; both `12.5` and `12,5` work).
 
 - **Size** — camera resolution. Full 2560×1922 runs ~14 fps (the USB 3.0
-  throughput limit); binned 1280×960 runs ~36 fps.
-- **Auto exposure** — on by default. The camera manages exposure/gain; the
-  **Target** slider biases how bright auto exposure aims (lower it if shiny
-  solder blows out). Uncheck for manual control via the Time/Gain sliders.
-- **Time** — logarithmic slider over the camera's full exposure range
-  (shown in ms/µs). Manual mode only.
+  throughput limit); binned 1280×960 runs ~36 fps. **Frame rate** is shown
+  live below the size.
+- **Auto exposure** — on by default. **Target** biases how bright auto
+  exposure aims (lower it if shiny solder blows out). **Max ms** is the
+  longest exposure auto mode may use — it sets the frame rate floor
+  (fps ≈ 1000 / Max ms, up to the sensor readout limit); auto exposure
+  compensates with gain. Uncheck for manual control via Time/Gain.
+- **Time** — logarithmic slider over the camera's full exposure range (ms).
+  Manual mode only.
 - **Gain** — analog gain in percent (100 % = 1×). Manual mode only.
-- **Auto white balance** — one-push color correction (also runs automatically
-  on connect). Re-run it after changing lighting.
+- **Auto white balance** — one-push color correction (runs automatically on
+  first connect); the result lands in the **Temp**/**Tint** sliders, which
+  you can then adjust manually.
+- **Gamma / Contrast / Saturate** — color correction; **Reset colors**
+  returns all color settings to camera defaults.
 - **Sharpen** — SDK sharpening strength 0–500 (default 150).
 - **Flicker** — anti-banding: DC (default), 50 Hz, or 60 Hz. Leave on DC
   unless you see rolling bands in the image. Note: in the AC modes the
@@ -52,10 +58,15 @@ away to apply; both `12.5` and `12,5` work).
 On connect the app configures the camera for crisp, high-framerate live view:
 
 - USB frame speed level set to the camera's maximum (full USB 3.0 bandwidth)
-  and realtime mode on (stale buffered frames are dropped, lowest latency).
-- Auto exposure capped at 33 ms (the SDK default allows 350 ms ≈ 3 fps);
-  gain capped at 500 % so it can't get too noisy. Verified ~36 fps on the
-  MU503 at 1280×960.
+  and realtime mode on (stale buffered frames are dropped), frame queues
+  shortened to the minimum, and the USB grab thread priority raised —
+  minimum capture-to-display latency.
+- The live view renders through a custom fast-scaling control instead of
+  PictureBox (whose high-quality bicubic scaling costs tens of ms per 5 MP
+  frame on the UI thread).
+- Auto exposure capped at the Max ms goal time (default 33 ms; the SDK
+  default allows 350 ms ≈ 3 fps); gain capped at 500 % so it can't get too
+  noisy. Verified ~36 fps on the MU503 at 1280×960.
 - Auto-exposure anti-hunting: full-frame average metering (the SDK default
   meters only the brightest 1 % of pixels, which chases specular solder
   reflections), raised reaction threshold, and damped exposure/gain

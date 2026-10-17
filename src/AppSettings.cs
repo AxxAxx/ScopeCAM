@@ -18,6 +18,12 @@ public class AppSettings
     public bool FlipH { get; set; }
     public bool FlipV { get; set; }
     public bool Crosshair { get; set; }
+    public uint MaxAutoExpoUs { get; set; } = 33_333;
+    public int WbTemp { get; set; } = -1; // -1 = not saved; run auto WB on connect
+    public int WbTint { get; set; } = -1;
+    public int Gamma { get; set; } = 100;
+    public int Contrast { get; set; }
+    public int Saturation { get; set; } = 128;
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

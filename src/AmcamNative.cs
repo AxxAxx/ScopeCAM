@@ -37,9 +37,17 @@ internal static class AmcamNative
 
     // Events delivered to the StartPullModeWithCallback callback.
     public const uint EVENT_EXPOSURE = 0x0001;     // auto exposure changed exposure/gain
+    public const uint EVENT_TEMPTINT = 0x0002;     // white balance temp/tint changed
     public const uint EVENT_IMAGE = 0x0004;        // a live frame is ready to pull
     public const uint EVENT_ERROR = 0x0080;        // generic error, operation stopped
     public const uint EVENT_DISCONNECTED = 0x0081; // camera unplugged
+
+    // Image adjustment ranges (from the SDK header).
+    public const int TEMP_MIN = 2000, TEMP_MAX = 15000, TEMP_DEF = 6503;
+    public const int TINT_MIN = 200, TINT_MAX = 2500, TINT_DEF = 1000;
+    public const int GAMMA_MIN = 20, GAMMA_MAX = 180, GAMMA_DEF = 100;
+    public const int CONTRAST_MIN = -255, CONTRAST_MAX = 255, CONTRAST_DEF = 0;
+    public const int SATURATION_MIN = 0, SATURATION_MAX = 255, SATURATION_DEF = 128;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct DeviceV2
@@ -139,6 +147,12 @@ internal static class AmcamNative
     // Demosaic method: 0 = bilinear (default), 1 = VNG, 2 = PPG, 3 = AHD,
     // 4 = EA. Bilinear produces false color on fine detail.
     public const uint OPTION_DEMOSAIC = 0x12;
+
+    // Latency: USB grab thread priority 0-3 (default 1) and frame queue
+    // depths [2,1024] (default 3) — shorter queue = less lag.
+    public const uint OPTION_THREAD_PRIORITY = 0x02;
+    public const uint OPTION_FRAME_DEQUE_LENGTH = 0x37;
+    public const uint OPTION_BACKEND_DEQUE_LENGTH = 0x41;
     public const uint OPTION_AUTOEXP_THRESHOLD = 0x29;
     public const uint OPTION_AUTOEXPOSURE_PERCENT = 0x4a;
     public const uint OPTION_AUTOEXP_EXPOTIME_DAMP = 0x60;
@@ -179,6 +193,27 @@ internal static class AmcamNative
 
     [DllImport(Dll)]
     public static extern int Amcam_get_TempTint(IntPtr h, out int temp, out int tint);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_put_TempTint(IntPtr h, int temp, int tint);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_put_Gamma(IntPtr h, int gamma);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_get_Gamma(IntPtr h, out int gamma);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_put_Contrast(IntPtr h, int contrast);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_get_Contrast(IntPtr h, out int contrast);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_put_Saturation(IntPtr h, int saturation);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_get_Saturation(IntPtr h, out int saturation);
 
     [DllImport(Dll)]
     public static extern int Amcam_get_MaxAutoExpoTimeAGain(IntPtr h, out uint maxTimeUs, out ushort maxGain);
