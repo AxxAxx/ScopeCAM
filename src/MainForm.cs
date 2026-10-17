@@ -174,19 +174,21 @@ public class MainForm : Form
             box.TextAlign = HorizontalAlignment.Right;
             slider.ValueChanged += (_, _) =>
             {
-                if (_updatingUi) return;
-                _updatingUi = true;
-                box.Text = slider.Value.ToString();
-                _updatingUi = false;
-                if (_cam != IntPtr.Zero) apply(slider.Value);
+                // Mirror the slider into the box. The only time we DON'T is a
+                // background refresh (programmatic move, _updatingUi) landing
+                // while the user is typing in that same box — then we leave
+                // their text alone. A user drag always updates the box.
+                if (!(_updatingUi && box.Focused))
+                    box.Text = slider.Value.ToString();
+                // The camera write is gated so programmatic moves (sync, load
+                // defaults) don't echo back to the device.
+                if (!_updatingUi && _cam != IntPtr.Zero) apply(slider.Value);
             };
             WireNumericBox(box, v =>
             {
                 int val = (int)Math.Clamp(Math.Round(v), slider.Minimum, slider.Maximum);
-                SetSliderSafe(slider, val);
-                _updatingUi = true;
-                box.Text = val.ToString();
-                _updatingUi = false;
+                SetSliderSafe(slider, val);   // fires ValueChanged → updates box
+                box.Text = val.ToString();    // normalize (e.g. "7.0" → "7")
                 if (_cam != IntPtr.Zero) apply(val);
             });
             AddLabeledRow(name, slider, box);
@@ -341,22 +343,23 @@ public class MainForm : Form
 
         // Initial control values = the built-in defaults. These are the
         // single source of truth pushed to the camera by ApplyUiStateToCamera.
-        _updatingUi = true;
-        _autoExpo.Checked = true;
-        _aeTargetSlider.Value = 120; _aeTargetBox.Text = "120";
-        _maxAutoSlider.Value = 33; _maxAutoBox.Text = "33";
-        _gainSlider.Value = 100; _gainBox.Text = "100";
-        _wbTempSlider.Value = AmcamNative.TEMP_DEF; _wbTempBox.Text = AmcamNative.TEMP_DEF.ToString();
-        _wbTintSlider.Value = AmcamNative.TINT_DEF; _wbTintBox.Text = AmcamNative.TINT_DEF.ToString();
-        _gammaSlider.Value = AmcamNative.GAMMA_DEF; _gammaBox.Text = AmcamNative.GAMMA_DEF.ToString();
-        _contrastSlider.Value = AmcamNative.CONTRAST_DEF; _contrastBox.Text = AmcamNative.CONTRAST_DEF.ToString();
-        _satSlider.Value = AmcamNative.SATURATION_DEF; _satBox.Text = AmcamNative.SATURATION_DEF.ToString();
-        _sharpSlider.Value = 150; _sharpBox.Text = "150";
-        _denoiseSlider.Value = 0; _denoiseBox.Text = "0";
-        _smoothSlider.Value = 0; _smoothBox.Text = "0";
-        _demosaicCombo.SelectedIndex = 0; // EA
-        _flickerCombo.SelectedIndex = 2;  // DC
-        _updatingUi = false;
+        Programmatic(() =>
+        {
+            _autoExpo.Checked = true;
+            _aeTargetSlider.Value = 120; _aeTargetBox.Text = "120";
+            _maxAutoSlider.Value = 33; _maxAutoBox.Text = "33";
+            _gainSlider.Value = 100; _gainBox.Text = "100";
+            _wbTempSlider.Value = AmcamNative.TEMP_DEF; _wbTempBox.Text = AmcamNative.TEMP_DEF.ToString();
+            _wbTintSlider.Value = AmcamNative.TINT_DEF; _wbTintBox.Text = AmcamNative.TINT_DEF.ToString();
+            _gammaSlider.Value = AmcamNative.GAMMA_DEF; _gammaBox.Text = AmcamNative.GAMMA_DEF.ToString();
+            _contrastSlider.Value = AmcamNative.CONTRAST_DEF; _contrastBox.Text = AmcamNative.CONTRAST_DEF.ToString();
+            _satSlider.Value = AmcamNative.SATURATION_DEF; _satBox.Text = AmcamNative.SATURATION_DEF.ToString();
+            _sharpSlider.Value = 150; _sharpBox.Text = "150";
+            _denoiseSlider.Value = 0; _denoiseBox.Text = "0";
+            _smoothSlider.Value = 0; _smoothBox.Text = "0";
+            _demosaicCombo.SelectedIndex = 0; // EA
+            _flickerCombo.SelectedIndex = 2;  // DC
+        });
 
         SetConnectedControlsEnabled(false);
         return panel;
@@ -387,12 +390,19 @@ public class MainForm : Form
         box.Leave += (_, _) => Commit();
     }
 
-    private void SetSliderSafe(TrackBar slider, int value)
+    // Run a block with _updatingUi set, guaranteeing it is restored even if
+    // the block throws (a stuck flag would silently disable every camera
+    // write). Save/restore (not just set-false) keeps nesting correct.
+    private void Programmatic(Action body)
     {
+        bool prev = _updatingUi;
         _updatingUi = true;
-        slider.Value = Math.Clamp(value, slider.Minimum, slider.Maximum);
-        _updatingUi = false;
+        try { body(); }
+        finally { _updatingUi = prev; }
     }
+
+    private void SetSliderSafe(TrackBar slider, int value) =>
+        Programmatic(() => slider.Value = Math.Clamp(value, slider.Minimum, slider.Maximum));
 
     private void SetExposureText(uint expoUs) =>
         _expoBox.Text = (expoUs / 1000.0).ToString("0.0#", CultureInfo.CurrentCulture);
@@ -581,45 +591,45 @@ public class MainForm : Form
     private void SetUiFromSettings(AppSettings s)
     {
         _maxAutoUs = Math.Clamp(s.MaxAutoExpoUs, 1_000, MaxAutoUsCeiling);
-        _updatingUi = true;
-        _autoExpo.Checked = s.AutoExposure;
-        _aeTargetSlider.Value = Math.Clamp(s.AeTarget, 16, 220);
-        _aeTargetBox.Text = _aeTargetSlider.Value.ToString();
-        int maxMs = Math.Clamp((int)(_maxAutoUs / 1000), _maxAutoSlider.Minimum, _maxAutoSlider.Maximum);
-        _maxAutoSlider.Value = maxMs;
-        _maxAutoBox.Text = maxMs.ToString();
-        _sharpSlider.Value = Math.Clamp(s.Sharpen, 0, 500);
-        _sharpBox.Text = _sharpSlider.Value.ToString();
-        _denoiseSlider.Value = Math.Clamp(s.Denoise, 0, 100);
-        _denoiseBox.Text = _denoiseSlider.Value.ToString();
-        _smoothSlider.Value = Math.Clamp(s.Smooth, 0, 4);
-        _smoothBox.Text = _smoothSlider.Value.ToString();
-        _smoothLevel = _smoothSlider.Value;
-        _demosaicCombo.SelectedIndex = Math.Clamp(s.DemosaicIndex, 0, 4);
-        _flickerCombo.SelectedIndex = Math.Clamp(s.FlickerIndex, 0, 2);
-        _gammaSlider.Value = Math.Clamp(s.Gamma, AmcamNative.GAMMA_MIN, AmcamNative.GAMMA_MAX);
-        _gammaBox.Text = _gammaSlider.Value.ToString();
-        _contrastSlider.Value = Math.Clamp(s.Contrast, AmcamNative.CONTRAST_MIN, AmcamNative.CONTRAST_MAX);
-        _contrastBox.Text = _contrastSlider.Value.ToString();
-        _satSlider.Value = Math.Clamp(s.Saturation, AmcamNative.SATURATION_MIN, AmcamNative.SATURATION_MAX);
-        _satBox.Text = _satSlider.Value.ToString();
-        if (s.WbTemp >= AmcamNative.TEMP_MIN && s.WbTint >= AmcamNative.TINT_MIN)
+        Programmatic(() =>
         {
-            _wbTempSlider.Value = Math.Clamp(s.WbTemp, AmcamNative.TEMP_MIN, AmcamNative.TEMP_MAX);
-            _wbTempBox.Text = _wbTempSlider.Value.ToString();
-            _wbTintSlider.Value = Math.Clamp(s.WbTint, AmcamNative.TINT_MIN, AmcamNative.TINT_MAX);
-            _wbTintBox.Text = _wbTintSlider.Value.ToString();
-        }
-        _flipH.Checked = s.FlipH;
-        _flipV.Checked = s.FlipV;
-        _crosshair.Checked = s.Crosshair;
-        _view.Crosshair = s.Crosshair;
-        _updatingUi = false;
+            _autoExpo.Checked = s.AutoExposure;
+            _aeTargetSlider.Value = Math.Clamp(s.AeTarget, 16, 220);
+            _aeTargetBox.Text = _aeTargetSlider.Value.ToString();
+            int maxMs = Math.Clamp((int)(_maxAutoUs / 1000), _maxAutoSlider.Minimum, _maxAutoSlider.Maximum);
+            _maxAutoSlider.Value = maxMs;
+            _maxAutoBox.Text = maxMs.ToString();
+            _sharpSlider.Value = Math.Clamp(s.Sharpen, 0, 500);
+            _sharpBox.Text = _sharpSlider.Value.ToString();
+            _denoiseSlider.Value = Math.Clamp(s.Denoise, 0, 100);
+            _denoiseBox.Text = _denoiseSlider.Value.ToString();
+            _smoothSlider.Value = Math.Clamp(s.Smooth, 0, 4);
+            _smoothBox.Text = _smoothSlider.Value.ToString();
+            _smoothLevel = _smoothSlider.Value;
+            _demosaicCombo.SelectedIndex = Math.Clamp(s.DemosaicIndex, 0, 4);
+            _flickerCombo.SelectedIndex = Math.Clamp(s.FlickerIndex, 0, 2);
+            _gammaSlider.Value = Math.Clamp(s.Gamma, AmcamNative.GAMMA_MIN, AmcamNative.GAMMA_MAX);
+            _gammaBox.Text = _gammaSlider.Value.ToString();
+            _contrastSlider.Value = Math.Clamp(s.Contrast, AmcamNative.CONTRAST_MIN, AmcamNative.CONTRAST_MAX);
+            _contrastBox.Text = _contrastSlider.Value.ToString();
+            _satSlider.Value = Math.Clamp(s.Saturation, AmcamNative.SATURATION_MIN, AmcamNative.SATURATION_MAX);
+            _satBox.Text = _satSlider.Value.ToString();
+            if (s.WbTemp >= AmcamNative.TEMP_MIN && s.WbTint >= AmcamNative.TINT_MIN)
+            {
+                _wbTempSlider.Value = Math.Clamp(s.WbTemp, AmcamNative.TEMP_MIN, AmcamNative.TEMP_MAX);
+                _wbTempBox.Text = _wbTempSlider.Value.ToString();
+                _wbTintSlider.Value = Math.Clamp(s.WbTint, AmcamNative.TINT_MIN, AmcamNative.TINT_MAX);
+                _wbTintBox.Text = _wbTintSlider.Value.ToString();
+            }
+            _flipH.Checked = s.FlipH;
+            _flipV.Checked = s.FlipV;
+            _crosshair.Checked = s.Crosshair;
+            _view.Crosshair = s.Crosshair;
+        });
     }
 
-    private void PopulateResolutions()
+    private void PopulateResolutions() => Programmatic(() =>
     {
-        _updatingUi = true;
         _resCombo.Items.Clear();
         int count = AmcamNative.Amcam_get_ResolutionNumber(_cam);
         for (uint i = 0; i < count; i++)
@@ -632,8 +642,7 @@ public class MainForm : Form
         }
         if (AmcamNative.Ok(AmcamNative.Amcam_get_eSize(_cam, out uint current)) && current < _resCombo.Items.Count)
             _resCombo.SelectedIndex = (int)current;
-        _updatingUi = false;
-    }
+    });
 
     private void OnResolutionChanged(object? sender, EventArgs e)
     {
@@ -699,18 +708,20 @@ public class MainForm : Form
         if (_expoMaxUs <= _expoMinUs) _expoMaxUs = _expoMinUs + 1;
 
         AmcamNative.Amcam_get_ExpoAGainRange(_cam, out _gainMin, out _gainMax, out _);
-        _updatingUi = true;
-        _gainSlider.Minimum = _gainMin;
-        _gainSlider.Maximum = Math.Max(_gainMax, (ushort)(_gainMin + 1));
-        _updatingUi = false;
+        Programmatic(() =>
+        {
+            _gainSlider.Minimum = _gainMin;
+            _gainSlider.Maximum = Math.Max(_gainMax, (ushort)(_gainMin + 1));
+        });
     }
 
     private void SyncUiFromCamera()
     {
-        _updatingUi = true;
-        if (AmcamNative.Ok(AmcamNative.Amcam_get_AutoExpoEnable(_cam, out int auto)))
-            _autoExpo.Checked = auto != 0;
-        _updatingUi = false;
+        Programmatic(() =>
+        {
+            if (AmcamNative.Ok(AmcamNative.Amcam_get_AutoExpoEnable(_cam, out int auto)))
+                _autoExpo.Checked = auto != 0;
+        });
         UpdateExposureControlsEnabled();
         RefreshSlidersFromCamera();
         RefreshWhiteBalanceFromCamera();
@@ -721,20 +732,21 @@ public class MainForm : Form
     {
         if (_cam == IntPtr.Zero)
             return;
-        _updatingUi = true;
-        if (AmcamNative.Ok(AmcamNative.Amcam_get_ExpoTime(_cam, out uint expoUs)))
+        Programmatic(() =>
         {
-            _expoSlider.Value = ExposureToSlider(expoUs);
-            if (!_expoBox.Focused)
-                SetExposureText(expoUs);
-        }
-        if (AmcamNative.Ok(AmcamNative.Amcam_get_ExpoAGain(_cam, out ushort gain)))
-        {
-            _gainSlider.Value = Math.Clamp(gain, (ushort)_gainSlider.Minimum, (ushort)_gainSlider.Maximum);
-            if (!_gainBox.Focused)
-                _gainBox.Text = gain.ToString();
-        }
-        _updatingUi = false;
+            if (AmcamNative.Ok(AmcamNative.Amcam_get_ExpoTime(_cam, out uint expoUs)))
+            {
+                _expoSlider.Value = ExposureToSlider(expoUs);
+                if (!_expoBox.Focused)
+                    SetExposureText(expoUs);
+            }
+            if (AmcamNative.Ok(AmcamNative.Amcam_get_ExpoAGain(_cam, out ushort gain)))
+            {
+                _gainSlider.Value = Math.Clamp(gain, (ushort)_gainSlider.Minimum, (ushort)_gainSlider.Maximum);
+                if (!_gainBox.Focused)
+                    _gainBox.Text = gain.ToString();
+            }
+        });
     }
 
     private void RefreshWhiteBalanceFromCamera()
@@ -743,14 +755,15 @@ public class MainForm : Form
             return;
         if (AmcamNative.Ok(AmcamNative.Amcam_get_TempTint(_cam, out int temp, out int tint)))
         {
-            _updatingUi = true;
-            _wbTempSlider.Value = Math.Clamp(temp, AmcamNative.TEMP_MIN, AmcamNative.TEMP_MAX);
-            if (!_wbTempBox.Focused)
-                _wbTempBox.Text = temp.ToString();
-            _wbTintSlider.Value = Math.Clamp(tint, AmcamNative.TINT_MIN, AmcamNative.TINT_MAX);
-            if (!_wbTintBox.Focused)
-                _wbTintBox.Text = tint.ToString();
-            _updatingUi = false;
+            Programmatic(() =>
+            {
+                _wbTempSlider.Value = Math.Clamp(temp, AmcamNative.TEMP_MIN, AmcamNative.TEMP_MAX);
+                if (!_wbTempBox.Focused)
+                    _wbTempBox.Text = temp.ToString();
+                _wbTintSlider.Value = Math.Clamp(tint, AmcamNative.TINT_MIN, AmcamNative.TINT_MAX);
+                if (!_wbTintBox.Focused)
+                    _wbTintBox.Text = tint.ToString();
+            });
         }
     }
 
@@ -758,23 +771,27 @@ public class MainForm : Form
     {
         if (_cam == IntPtr.Zero)
             return;
-        _updatingUi = true;
-        if (AmcamNative.Ok(AmcamNative.Amcam_get_Gamma(_cam, out int gamma)))
+        Programmatic(() =>
         {
-            _gammaSlider.Value = Math.Clamp(gamma, AmcamNative.GAMMA_MIN, AmcamNative.GAMMA_MAX);
-            _gammaBox.Text = _gammaSlider.Value.ToString();
-        }
-        if (AmcamNative.Ok(AmcamNative.Amcam_get_Contrast(_cam, out int contrast)))
-        {
-            _contrastSlider.Value = Math.Clamp(contrast, AmcamNative.CONTRAST_MIN, AmcamNative.CONTRAST_MAX);
-            _contrastBox.Text = _contrastSlider.Value.ToString();
-        }
-        if (AmcamNative.Ok(AmcamNative.Amcam_get_Saturation(_cam, out int sat)))
-        {
-            _satSlider.Value = Math.Clamp(sat, AmcamNative.SATURATION_MIN, AmcamNative.SATURATION_MAX);
-            _satBox.Text = _satSlider.Value.ToString();
-        }
-        _updatingUi = false;
+            if (AmcamNative.Ok(AmcamNative.Amcam_get_Gamma(_cam, out int gamma)))
+            {
+                _gammaSlider.Value = Math.Clamp(gamma, AmcamNative.GAMMA_MIN, AmcamNative.GAMMA_MAX);
+                if (!_gammaBox.Focused)
+                    _gammaBox.Text = _gammaSlider.Value.ToString();
+            }
+            if (AmcamNative.Ok(AmcamNative.Amcam_get_Contrast(_cam, out int contrast)))
+            {
+                _contrastSlider.Value = Math.Clamp(contrast, AmcamNative.CONTRAST_MIN, AmcamNative.CONTRAST_MAX);
+                if (!_contrastBox.Focused)
+                    _contrastBox.Text = _contrastSlider.Value.ToString();
+            }
+            if (AmcamNative.Ok(AmcamNative.Amcam_get_Saturation(_cam, out int sat)))
+            {
+                _satSlider.Value = Math.Clamp(sat, AmcamNative.SATURATION_MIN, AmcamNative.SATURATION_MAX);
+                if (!_satBox.Focused)
+                    _satBox.Text = _satSlider.Value.ToString();
+            }
+        });
     }
 
     // ---------- Camera events (callback arrives on an SDK thread) ----------
