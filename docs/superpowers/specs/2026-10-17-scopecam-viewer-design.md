@@ -85,5 +85,32 @@ snapshot work. (Build verified by Claude; runtime verification by Axel.)
 
 ## Out of scope (YAGNI)
 
-Resolution switching, white balance, recording video, measurement overlays,
-multiple cameras.
+Resolution switching, recording video, measurement overlays, multiple
+cameras.
+
+## Amendment 2026-10-17: high framerate, auto color, PCB image quality
+
+Requested by Axel after first version: start in auto exposure at ~30 fps,
+use full USB 3.0 bandwidth, automatic color control, and image-quality
+features used by other microscope viewers (researched from the ToupTek SDK
+header and vendor viewer feature sets).
+
+Startup configuration (`ApplyStartupDefaults`):
+- `put_Speed(get_MaxSpeed())` — max USB frame-speed level (not guaranteed
+  to be the default), plus `put_RealTime(1)` for lowest display latency.
+- Auto exposure on with `put_MaxAutoExpoTimeAGain(33333 µs, ≤500 %)` — the
+  SDK default allows 350 ms exposures (≈3 fps); the cap keeps ≥30 fps.
+  Measured 36 fps on the MU503 at 1280×960.
+- AE anti-hunting (fixes visible exposure flicker on reflective PCBs):
+  `OPTION_AUTOEXPOSURE_PERCENT=100` (full-average metering instead of the
+  default brightest-1 % metering), `OPTION_AUTOEXP_THRESHOLD=10`,
+  `OPTION_AUTOEXP_EXPOTIME_DAMP=300`, `OPTION_AUTOEXP_GAIN_DAMP=300`.
+- `AwbOnce` after stream start (automatic color), `put_HZ(1)` (50 Hz
+  anti-flicker), `OPTION_SHARPENING` radius 2 / strength 150.
+
+New UI: AE target slider (enabled in auto mode), one-push white balance
+button, sharpening slider, flicker selector (50/60 Hz/DC), flip H/V,
+crosshair overlay, freeze/resume. Controls moved to a right-side panel.
+
+All option constants verified against toupcam.h v60 (indi-3rdparty vendored
+copy) and probed for support against the installed amcam.dll v59.

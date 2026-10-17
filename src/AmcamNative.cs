@@ -109,6 +109,66 @@ internal static class AmcamNative
     [DllImport(Dll)]
     public static extern int Amcam_put_AutoExpoEnable(IntPtr h, int enabled);
 
+    // AMCAM_OPTION_SHARPENING: (threshold << 24) | (radius << 16) | strength;
+    // strength [0,500] (0 = off), radius [1,10], threshold [0,255].
+    public const uint OPTION_SHARPENING = 0x1e;
+
+    // Auto-exposure stability. THRESHOLD [2,15] def 5: minimum brightness
+    // delta before AE reacts. PERCENT: 1-99 = meter on the brightest N% of
+    // pixels (default 1 — twitchy on shiny PCBs), 0/100 = full-frame
+    // average. DAMP (thousandths, [0,1000] def 0): higher = smoother,
+    // slower exposure/gain transitions.
+    public const uint OPTION_AUTOEXP_THRESHOLD = 0x29;
+    public const uint OPTION_AUTOEXPOSURE_PERCENT = 0x4a;
+    public const uint OPTION_AUTOEXP_EXPOTIME_DAMP = 0x60;
+    public const uint OPTION_AUTOEXP_GAIN_DAMP = 0x61;
+
+    [DllImport(Dll)]
+    public static extern int Amcam_put_Option(IntPtr h, uint option, int value);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_get_Option(IntPtr h, uint option, out int value);
+
+    // Frame speed level (USB bandwidth); range [0, get_MaxSpeed()].
+    [DllImport(Dll)]
+    public static extern ushort Amcam_get_MaxSpeed(IntPtr h);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_put_Speed(IntPtr h, ushort speed);
+
+    // Auto-exposure limits: time in microseconds, gain in percent.
+    [DllImport(Dll)]
+    public static extern int Amcam_put_MaxAutoExpoTimeAGain(IntPtr h, uint maxTimeUs, ushort maxGain);
+
+    // Auto-exposure target brightness [16, 220], default 120.
+    [DllImport(Dll)]
+    public static extern int Amcam_put_AutoExpoTarget(IntPtr h, ushort target);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_get_AutoExpoTarget(IntPtr h, out ushort target);
+
+    // Anti-flicker: 0 = 60 Hz AC, 1 = 50 Hz AC, 2 = DC.
+    [DllImport(Dll)]
+    public static extern int Amcam_put_HZ(IntPtr h, int hz);
+
+    // One-push auto white balance (temp/tint mode); call after streaming
+    // has started. Callbacks are optional (pass IntPtr.Zero).
+    [DllImport(Dll)]
+    public static extern int Amcam_AwbOnce(IntPtr h, IntPtr fnTTProc, IntPtr ctxTT);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_put_HFlip(IntPtr h, int hflip);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_put_VFlip(IntPtr h, int vflip);
+
+    [DllImport(Dll)]
+    public static extern int Amcam_Pause(IntPtr h, int pause);
+
+    // Realtime mode 1 = drop pending frames, always show the newest one.
+    [DllImport(Dll)]
+    public static extern int Amcam_put_RealTime(IntPtr h, int val);
+
     /// <summary>Enumerate connected cameras.</summary>
     public static DeviceV2[] Enumerate()
     {
