@@ -7,15 +7,17 @@ the camera is unplugged.
 
 ## Running
 
-Double-click `ScopeCAM.exe` (there is a **ScopeCAM shortcut on the Desktop**),
-or run the built exe at:
-
-```
-src\bin\Release\net8.0-windows\ScopeCAM.exe
-```
+Double-click **`ScopeCAM.exe` in this folder** (or the ScopeCAM shortcut on
+the Desktop — it points to the same file).
 
 Close the AmScope application first — only one program can use the camera at
 a time.
+
+After code changes, regenerate the exe with:
+
+```
+dotnet publish src\ScopeCAM.csproj -c Release -p:PublishSingleFile=true -p:DebugType=none --no-self-contained -o .
+```
 
 ## Controls
 
